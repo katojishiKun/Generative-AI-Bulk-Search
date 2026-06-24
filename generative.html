@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <title>生成AI一括検索</title>
+  <link rel="stylesheet" href="generative.css">
+</head>
+
+<body>
+  <h1>生成AI一括検索</h1>
+
+  <!-- 送信先チェックボックス -->
+  <div class="destination-label">送信先</div>
+  <div class="destination-group">
+    <label>
+      <input type="checkbox" id="chk-gemini" value="gemini" checked>
+      Gemini
+    </label>
+    <label>
+      <input type="checkbox" id="chk-chatgpt" value="chatgpt" checked>
+      ChatGPT
+    </label>
+    <label>
+      <input type="checkbox" id="chk-claude" value="claude" checked>
+      Claude
+    </label>
+    <label>
+      <input type="checkbox" id="chk-perplexity" value="perplexity" checked>
+      Perplexity
+    </label>
+    <!-- 将来追加するサービスはここに <label> を追加するだけ -->
+  </div>
+
+  <textarea id="input-area" placeholder="ここに入力してください"></textarea>
+  <div class="btn-row">
+    <button id="submit-btn">送信</button>
+    <button id="retry-btn" disabled>再取得</button>
+  </div>
+  <div id="status"></div>
+  <div id="history"></div>
+
+  <script src="generative.js"></script>
+</body>
+
+</html>

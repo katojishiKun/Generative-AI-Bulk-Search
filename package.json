@@ -1,0 +1,19 @@
+{
+  "name": "launch-chrome",
+  "version": "1.0.0",
+  "description": "普段のChromeプロファイルでブラウザを起動するスクリプト",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "ts-node --esm launch-chrome.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "playwright": "^1.60.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
