@@ -1,7 +1,7 @@
 import { launchChrome } from './launch-chrome.ts';
+import { type Page } from 'playwright';
 import * as path from 'path';
 import * as url from 'url';
-import type { Page, Locator } from 'playwright';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const PAGE_PATH = `file:///${path.join(__dirname, 'generative.html').replace(/\\/g, '/')}`;
@@ -12,47 +12,69 @@ const PERPLEXITY_URL  = 'https://www.perplexity.ai/';
 
 const RESPONSE_TIMEOUT_MS = 90_000;
 
-// ─────────────────────────────────────────────────────────────────
-// テキスト入力ヘルパー
-// keyboard.type() は長文で文字落ちが起きるため、以下の優先順位で入力する:
-//   1. locator.fill()          … <textarea> / <input> で確実・高速
-//   2. execCommand('insertText') … contenteditable 系（Gemini・Claude 等）で実績あり
-//   3. Clipboard + Ctrl+V      … 上記が両方失敗した場合のフォールバック
-// ─────────────────────────────────────────────────────────────────
-async function pasteText(page: Page, locator: Locator, text: string): Promise<void> {
-  await locator.click();
-  await page.keyboard.press('Control+a');
+const MAX_TYPE_RETRIES = 3;
+const RETRY_DELAY_MS   = 1500;
 
-  // 1. fill() を試みる（<textarea> / <input> はこれで完結）
-  try {
-    await locator.fill(text);
-    // fill() 後に入力欄が空のままなら失敗とみなす
-    const filled = await locator.evaluate((el: Element) => {
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        return el.value.length > 0;
+// ─────────────────────────────────────────────────────────────────
+// 入力チェック＆リトライ付きタイピング
+// ・keyboard.type() でテキストを入力した後、入力欄の実際の値と比較し、
+//   一致しなければ入力欄をクリアして再入力する（最大 MAX_TYPE_RETRIES 回）。
+// ・低スペック PC でタブ切り替えなどによる入力漏れを未然に防ぐ。
+// ─────────────────────────────────────────────────────────────────
+async function typeWithRetry(
+  page: Page,
+  inputSelector: string,
+  text: string,
+  getActualText: () => Promise<string>
+): Promise<void> {
+  const expectedLen = text.trim().length;
+
+  for (let attempt = 1; attempt <= MAX_TYPE_RETRIES; attempt++) {
+    const inputEl = page.locator(inputSelector).first();
+    await inputEl.click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+    // クリア完了を少し待つ
+    await new Promise(r => setTimeout(r, 200));
+
+    // keyboard.type() の代わりに insertText を使用
+    // ・OSのクリップボードを汚さない
+    // ・改行 (\n) が Enter キーとして解釈されず、そのまま入力欄に挿入されるため送信が暴発しない
+    // ・タイピングではなく一括挿入のため、フォーカス外れによる入力途切れが起きない
+    await page.evaluate(({ sel, txt }) => {
+      const el = document.querySelector(sel) as HTMLElement;
+      if (el) {
+        el.focus();
+        document.execCommand('insertText', false, txt);
       }
-      return (el as HTMLElement).innerText.trim().length > 0;
-    });
-    if (filled) return;
-  } catch {
-    // contenteditable 等では fill() が例外を投げることがある
-  }
+    }, { sel: inputSelector, txt: text });
 
-  // 2. execCommand('insertText') — contenteditable で動作し React/Vue のイベントも発火
-  const inserted: boolean = await page.evaluate((t: string) => {
-    try {
-      return document.execCommand('insertText', false, t);
-    } catch {
-      return false;
+    // 入力後1秒待機（低スペックPCでのDOM反映遅延を吸収する）
+    await new Promise(r => setTimeout(r, 1000));
+
+    const actualText = await getActualText();
+    const actualLen  = actualText.trim().length;
+    // 入力元テキストを100%として、85%〜115%の文字数なら許容（改行変換等によるズレを吸収）
+    const ratio = expectedLen > 0 ? actualLen / expectedLen : 1;
+    if (ratio >= 0.85 && ratio <= 1.15) {
+      if (attempt > 1) {
+        console.log(`[入力チェックOK] ${attempt}回目で成功（文字数: ${actualLen}/${expectedLen}, 比率: ${(ratio * 100).toFixed(1)}%）。`);
+      }
+      return;
     }
-  }, text);
-  if (inserted) return;
 
-  // 3. クリップボード経由フォールバック
-  await page.evaluate(async (t: string) => {
-    await navigator.clipboard.writeText(t);
-  }, text);
-  await page.keyboard.press('Control+v');
+    console.warn(
+      `[入力チェック失敗] 期待: ${expectedLen}文字 / 実際: ${actualLen}文字` +
+      ` (比率: ${(ratio * 100).toFixed(1)}%) (${attempt}/${MAX_TYPE_RETRIES})`
+    );
+    if (attempt < MAX_TYPE_RETRIES) {
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+    }
+  }
+  throw new Error(
+    `${MAX_TYPE_RETRIES}回リトライしましたが、正しく入力できませんでした` +
+    `（期待: ${expectedLen}文字）。`
+  );
 }
 
 const { context, chromeProcess } = await launchChrome();
@@ -206,26 +228,45 @@ async function waitForChatGPTResponse(
 // 送信 → Gemini
 // ─────────────────────────────────────────────────────────────────
 await inputPage.exposeFunction('sendToGemini', async (text: string, entryId: string) => {
-  console.log(`Gemini へ送信: ${text} (entryId: ${entryId})`);
+  console.log(`Gemini へ送信: ${text.length}文字 (entryId: ${entryId})`);
   lastEntryId = entryId;
 
   await geminiPage.bringToFront();
 
   const inputSelector = 'rich-textarea div[contenteditable="true"], rich-textarea div.ql-editor';
   await geminiPage.waitForSelector(inputSelector, { timeout: 15000 });
-  const inputEl = geminiPage.locator(inputSelector).first();
 
   lastPreviousGeminiCount = await geminiPage.evaluate(
     () => document.querySelectorAll('model-response').length
   );
 
-  await pasteText(geminiPage, inputEl, text);
+  // ① 入力チェック＆リトライ付きタイピング
+  try {
+    await typeWithRetry(
+      geminiPage,
+      inputSelector,
+      text,
+      async () => await geminiPage.evaluate((sel) =>
+        document.querySelector(sel)?.textContent?.trim() ?? '', inputSelector)
+    );
+  } catch (err: any) {
+    console.error(`Gemini 入力失敗: ${err.message}`);
+    await inputPage.bringToFront();
+    await inputPage.evaluate(
+      ({ id, msg }) => { (window as any).updateGeminiResponseError(id, msg); },
+      { id: entryId, msg: err.message }
+    );
+    return;
+  }
 
+  // ② 送信
   const sendBtn = geminiPage.locator('div.send-button-container button').first();
   await sendBtn.click();
+  // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
+  await new Promise(r => setTimeout(r, 500));
   console.log(`Gemini 送信完了 (送信前応答数: ${lastPreviousGeminiCount})`);
 
-  // 新しい model-response が出るまで待機
+  // ③ 新しい model-response が出るまで少し待機
   const sendTimeout = Date.now() + 15000;
   while (Date.now() < sendTimeout) {
     const count: number = await geminiPage.evaluate(
@@ -237,27 +278,32 @@ await inputPage.exposeFunction('sendToGemini', async (text: string, entryId: str
 
   await inputPage.bringToFront();
 
-  try {
-    const answer = await waitForGeminiResponse(lastPreviousGeminiCount);
-    console.log(`Gemini 回答取得完了 (${answer.length} 文字)`);
-    await inputPage.evaluate(
-      ({ id, a }) => { (window as any).updateGeminiResponse(id, a); },
-      { id: entryId, a: answer }
-    );
-  } catch (err: any) {
-    console.error(`Gemini 回答取得失敗: ${err.message}`);
-    await inputPage.evaluate(
-      ({ id, msg }) => { (window as any).updateGeminiResponseError(id, msg); },
-      { id: entryId, msg: err.message }
-    );
-  }
+  // ④ 回答待ちをバックグラウンドで実行（直列送信を妨げないよう fire-and-forget）
+  const capturedGeminiCount = lastPreviousGeminiCount;
+  void (async () => {
+    try {
+      const answer = await waitForGeminiResponse(capturedGeminiCount);
+      console.log(`Gemini 回答取得完了 (${answer.length} 文字)`);
+      await inputPage.evaluate(
+        ({ id, a }) => { (window as any).updateGeminiResponse(id, a); },
+        { id: entryId, a: answer }
+      );
+    } catch (err: any) {
+      console.error(`Gemini 回答取得失敗: ${err.message}`);
+      await inputPage.evaluate(
+        ({ id, msg }) => { (window as any).updateGeminiResponseError(id, msg); },
+        { id: entryId, msg: err.message }
+      );
+    }
+  })();
+  // sendToGemini はここで return。回答待ちは非同期で継続。
 });
 
 // ─────────────────────────────────────────────────────────────────
 // 送信 → ChatGPT
 // ─────────────────────────────────────────────────────────────────
 await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: string) => {
-  console.log(`ChatGPT へ送信: ${text} (entryId: ${entryId})`);
+  console.log(`ChatGPT へ送信: ${text.length}文字 (entryId: ${entryId})`);
 
   await chatgptPage.bringToFront();
 
@@ -279,30 +325,57 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
   );
   lastPreviousChatGPTCount = previousCount;
 
-  const inputEl = chatgptPage.locator(inputSelector).first();
-  await pasteText(chatgptPage, inputEl, text);
-
-  // 送信ボタンをクリック
-  const sendBtn = chatgptPage.locator('button[data-testid="send-button"]').first();
-  await sendBtn.click();
-  console.log(`ChatGPT 送信完了 (送信前応答数: ${previousCount})`);
-
-  await inputPage.bringToFront();
-
+  // ① 入力チェック＆リトライ付きタイピング
   try {
-    const answer = await waitForChatGPTResponse(previousCount);
-    console.log(`ChatGPT 回答取得完了 (${answer.length} 文字)`);
-    await inputPage.evaluate(
-      ({ id, a }) => { (window as any).updateChatGPTResponse(id, a); },
-      { id: entryId, a: answer }
+    await typeWithRetry(
+      chatgptPage,
+      inputSelector,
+      text,
+      async () => await chatgptPage.evaluate(() => {
+        const el = document.querySelector('#prompt-textarea');
+        if (!el) return '';
+        // textarea は .value、contenteditable div は .innerText で取得
+        return ((el as HTMLTextAreaElement).value ?? (el as HTMLElement).innerText ?? '').trim();
+      })
     );
   } catch (err: any) {
-    console.error(`ChatGPT 回答取得失敗: ${err.message}`);
+    console.error(`ChatGPT 入力失敗: ${err.message}`);
+    await inputPage.bringToFront();
     await inputPage.evaluate(
       ({ id, msg }) => { (window as any).updateChatGPTResponseError(id, msg); },
       { id: entryId, msg: err.message }
     );
+    return;
   }
+
+  // ② 送信ボタンをクリック
+  const sendBtn = chatgptPage.locator('button[data-testid="send-button"]').first();
+  await sendBtn.click();
+  // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
+  await new Promise(r => setTimeout(r, 500));
+  console.log(`ChatGPT 送信完了 (送信前応答数: ${previousCount})`);
+
+  await inputPage.bringToFront();
+
+  // ③ 回答待ちをバックグラウンドで実行（fire-and-forget）
+  const capturedChatGPTCount = previousCount;
+  void (async () => {
+    try {
+      const answer = await waitForChatGPTResponse(capturedChatGPTCount);
+      console.log(`ChatGPT 回答取得完了 (${answer.length} 文字)`);
+      await inputPage.evaluate(
+        ({ id, a }) => { (window as any).updateChatGPTResponse(id, a); },
+        { id: entryId, a: answer }
+      );
+    } catch (err: any) {
+      console.error(`ChatGPT 回答取得失敗: ${err.message}`);
+      await inputPage.evaluate(
+        ({ id, msg }) => { (window as any).updateChatGPTResponseError(id, msg); },
+        { id: entryId, msg: err.message }
+      );
+    }
+  })();
+  // sendToChatGPT はここで return。回答待ちは非同期で継続。
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -367,7 +440,7 @@ async function waitForClaudeResponse(
 // 送信 → Claude
 // ─────────────────────────────────────────────────────────────────
 await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: string) => {
-  console.log(`Claude へ送信: ${text} (entryId: ${entryId})`);
+  console.log(`Claude へ送信: ${text.length}文字 (entryId: ${entryId})`);
 
   await claudePage.bringToFront();
 
@@ -387,29 +460,57 @@ await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: str
   );
   lastPreviousClaudeCount = previousCount;
 
-  const inputEl = claudePage.locator(CLAUDE_INPUT_SEL).first();
-  await pasteText(claudePage, inputEl, text);
-
-  const sendBtn = claudePage.locator(CLAUDE_SEND_BTN_SEL).first();
-  await sendBtn.click();
-  console.log(`Claude 送信完了 (送信前応答数: ${previousCount})`);
-
-  await inputPage.bringToFront();
-
+  // ① 入力チェック＆リトライ付きタイピング
   try {
-    const answer = await waitForClaudeResponse(previousCount);
-    console.log(`Claude 回答取得完了 (${answer.length} 文字)`);
-    await inputPage.evaluate(
-      ({ id, a }) => { (window as any).updateClaudeResponse(id, a); },
-      { id: entryId, a: answer }
+    await typeWithRetry(
+      claudePage,
+      CLAUDE_INPUT_SEL,
+      text,
+      async () => await claudePage.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return '';
+        // ProseMirror は innerText が改行を正しく反映する
+        return ((el as HTMLElement).innerText ?? el.textContent ?? '').trim();
+      }, CLAUDE_INPUT_SEL)
     );
   } catch (err: any) {
-    console.error(`Claude 回答取得失敗: ${err.message}`);
+    console.error(`Claude 入力失敗: ${err.message}`);
+    await inputPage.bringToFront();
     await inputPage.evaluate(
       ({ id, msg }) => { (window as any).updateClaudeResponseError(id, msg); },
       { id: entryId, msg: err.message }
     );
+    return;
   }
+
+  // ② 送信
+  const sendBtn = claudePage.locator(CLAUDE_SEND_BTN_SEL).first();
+  await sendBtn.click();
+  // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
+  await new Promise(r => setTimeout(r, 500));
+  console.log(`Claude 送信完了 (送信前応答数: ${previousCount})`);
+
+  await inputPage.bringToFront();
+
+  // ③ 回答待ちをバックグラウンドで実行（fire-and-forget）
+  const capturedClaudeCount = previousCount;
+  void (async () => {
+    try {
+      const answer = await waitForClaudeResponse(capturedClaudeCount);
+      console.log(`Claude 回答取得完了 (${answer.length} 文字)`);
+      await inputPage.evaluate(
+        ({ id, a }) => { (window as any).updateClaudeResponse(id, a); },
+        { id: entryId, a: answer }
+      );
+    } catch (err: any) {
+      console.error(`Claude 回答取得失敗: ${err.message}`);
+      await inputPage.evaluate(
+        ({ id, msg }) => { (window as any).updateClaudeResponseError(id, msg); },
+        { id: entryId, msg: err.message }
+      );
+    }
+  })();
+  // sendToClaude はここで return。回答待ちは非同期で継続。
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -475,7 +576,7 @@ async function waitForPerplexityResponse(
 // 送信 → Perplexity
 // ─────────────────────────────────────────────────────────────────
 await inputPage.exposeFunction('sendToPerplexity', async (text: string, entryId: string) => {
-  console.log(`Perplexity へ送信: ${text} (entryId: ${entryId})`);
+  console.log(`Perplexity へ送信: ${text.length}文字 (entryId: ${entryId})`);
 
   await perplexityPage.bringToFront();
 
@@ -498,27 +599,55 @@ await inputPage.exposeFunction('sendToPerplexity', async (text: string, entryId:
   );
   lastPreviousPerplexityCount = previousCount;
 
-  const inputEl = perplexityPage.locator(PERPLEXITY_INPUT_SEL).first();
-  await pasteText(perplexityPage, inputEl, text);
-  await perplexityPage.keyboard.press('Enter');
-  console.log(`Perplexity 送信完了 (送信前応答数: ${previousCount})`);
-
-  await inputPage.bringToFront();
-
+  // ① 入力チェック＆リトライ付きタイピング
   try {
-    const answer = await waitForPerplexityResponse(previousCount);
-    console.log(`Perplexity 回答取得完了 (${answer.length} 文字)`);
-    await inputPage.evaluate(
-      ({ id, a }) => { (window as any).updatePerplexityResponse(id, a); },
-      { id: entryId, a: answer }
+    await typeWithRetry(
+      perplexityPage,
+      PERPLEXITY_INPUT_SEL,
+      text,
+      async () => await perplexityPage.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return '';
+        return ((el as HTMLInputElement).value ?? el.textContent ?? '').trim();
+      }, PERPLEXITY_INPUT_SEL)
     );
   } catch (err: any) {
-    console.error(`Perplexity 回答取得失敗: ${err.message}`);
+    console.error(`Perplexity 入力失敗: ${err.message}`);
+    await inputPage.bringToFront();
     await inputPage.evaluate(
       ({ id, msg }) => { (window as any).updatePerplexityResponseError(id, msg); },
       { id: entryId, msg: err.message }
     );
+    return;
   }
+
+  // ② 送信（Perplexity は Enter キーで送信）
+  await perplexityPage.keyboard.press('Enter');
+  // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
+  await new Promise(r => setTimeout(r, 500));
+  console.log(`Perplexity 送信完了 (送信前応答数: ${previousCount})`);
+
+  await inputPage.bringToFront();
+
+  // ③ 回答待ちをバックグラウンドで実行（fire-and-forget）
+  const capturedPerplexityCount = previousCount;
+  void (async () => {
+    try {
+      const answer = await waitForPerplexityResponse(capturedPerplexityCount);
+      console.log(`Perplexity 回答取得完了 (${answer.length} 文字)`);
+      await inputPage.evaluate(
+        ({ id, a }) => { (window as any).updatePerplexityResponse(id, a); },
+        { id: entryId, a: answer }
+      );
+    } catch (err: any) {
+      console.error(`Perplexity 回答取得失敗: ${err.message}`);
+      await inputPage.evaluate(
+        ({ id, msg }) => { (window as any).updatePerplexityResponseError(id, msg); },
+        { id: entryId, msg: err.message }
+      );
+    }
+  })();
+  // sendToPerplexity はここで return。回答待ちは非同期で継続。
 });
 
 // ─────────────────────────────────────────────────────────────────

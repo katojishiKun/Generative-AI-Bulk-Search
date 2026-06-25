@@ -36,15 +36,17 @@ btn.addEventListener('click', async () => {
   document.getElementById('input-area').value = '';
   createEntry(entryId, text, checkedTargets);
 
-  // 各サービスへ並行送信
-  const promises = [];
-  if (checkedTargets.includes('gemini'))     promises.push(window.sendToGemini(text, entryId));
-  if (checkedTargets.includes('chatgpt'))    promises.push(window.sendToChatGPT(text, entryId));
-  if (checkedTargets.includes('claude'))     promises.push(window.sendToClaude(text, entryId));
-  if (checkedTargets.includes('perplexity')) promises.push(window.sendToPerplexity(text, entryId));
+  // 各サービスへ順番に送信（直列処理 - タブのフォーカス競合を防ぐため）
+  // ※ 回答待ちは各 AI の送信関数内でバックグラウンドで並行実行されます
+  statusEl.textContent = '送信中... 各AIへ順番に入力しています。';
+  if (checkedTargets.includes('gemini'))     await window.sendToGemini(text, entryId);
+  if (checkedTargets.includes('chatgpt'))    await window.sendToChatGPT(text, entryId);
+  if (checkedTargets.includes('claude'))     await window.sendToClaude(text, entryId);
+  if (checkedTargets.includes('perplexity')) await window.sendToPerplexity(text, entryId);
 
-  await Promise.allSettled(promises);
   btn.disabled = false;
+  retryBtn.disabled = false;
+  statusEl.textContent = '全AIへの送信完了。回答を待っています。';
 });
 
 // ─── 再取得ボタン ─────────────────────────────────────────────
@@ -162,7 +164,7 @@ window.updatePerplexityResponseError = function(entryId, message) {
 // 再取得完了時（全サービス終了後）のコールバック
 window.onRetryComplete = function() {
   btn.disabled = false;
-  retryBtn.disabled = true;
+  retryBtn.disabled = false;
 };
 
 // 再取得失敗時の汎用エラー表示
