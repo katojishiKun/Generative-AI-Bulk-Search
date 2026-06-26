@@ -2,6 +2,7 @@ import { launchChrome } from './launch-chrome.ts';
 import { type Page } from 'playwright';
 import * as path from 'path';
 import * as url from 'url';
+import { SELECTORS } from './selectors.ts';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const PAGE_PATH = `file:///${path.join(__dirname, 'generative.html').replace(/\\/g, '/')}`;
@@ -130,32 +131,33 @@ async function waitForGeminiResponse(
   // 新しい model-response 要素が追加されるまで待機
   while (Date.now() - start < timeoutMs) {
     const count: number = await geminiPage.evaluate(
-      () => document.querySelectorAll('model-response').length
+      (sel) => document.querySelectorAll(sel).length,
+      SELECTORS.gemini.response
     );
     if (count > previousCount) break;
     await new Promise(r => setTimeout(r, 500));
   }
 
   while (Date.now() - start < timeoutMs) {
-    const currentText: string = await geminiPage.evaluate((prev) => {
-      const responses = document.querySelectorAll('model-response');
+    const currentText: string = await geminiPage.evaluate(({ prev, responseSel, contentSel }) => {
+      const responses = document.querySelectorAll(responseSel);
       const newResponses = Array.from(responses).slice(prev);
       if (newResponses.length === 0) return '';
       const last = newResponses[newResponses.length - 1];
-      return last?.querySelector('message-content')?.textContent?.trim() ?? '';
-    }, previousCount);
+      return last?.querySelector(contentSel)?.textContent?.trim() ?? '';
+    }, { prev: previousCount, responseSel: SELECTORS.gemini.response, contentSel: SELECTORS.gemini.content });
 
     if (currentText.length > 0 && currentText === lastText) {
       stableCount++;
       if (stableCount >= stableThreshold) {
         // 安定したら innerHTML を返す
-        const html: string = await geminiPage.evaluate((prev) => {
-          const responses = document.querySelectorAll('model-response');
+        const html: string = await geminiPage.evaluate(({ prev, responseSel, contentSel }) => {
+          const responses = document.querySelectorAll(responseSel);
           const newResponses = Array.from(responses).slice(prev);
           if (newResponses.length === 0) return '';
           const last = newResponses[newResponses.length - 1];
-          return last?.querySelector('message-content')?.innerHTML ?? '';
-        }, previousCount);
+          return last?.querySelector(contentSel)?.innerHTML ?? '';
+        }, { prev: previousCount, responseSel: SELECTORS.gemini.response, contentSel: SELECTORS.gemini.content });
         return html;
       }
     } else {
@@ -170,8 +172,6 @@ async function waitForGeminiResponse(
 // ─────────────────────────────────────────────────────────────────
 // ChatGPT 回答待機（安定判定は textContent、返却は innerHTML）
 // ─────────────────────────────────────────────────────────────────
-const CHATGPT_RESPONSE_SEL = '[data-message-author-role="assistant"]';
-
 async function waitForChatGPTResponse(
   previousCount: number,
   timeoutMs = RESPONSE_TIMEOUT_MS
@@ -186,7 +186,7 @@ async function waitForChatGPTResponse(
   while (Date.now() - start < timeoutMs) {
     const count: number = await chatgptPage.evaluate(
       (sel) => document.querySelectorAll(sel).length,
-      CHATGPT_RESPONSE_SEL
+      SELECTORS.chatgpt.response
     );
     if (count > previousCount) break;
     await new Promise(r => setTimeout(r, 500));
@@ -199,20 +199,20 @@ async function waitForChatGPTResponse(
       if (newResponses.length === 0) return '';
       const last = newResponses[newResponses.length - 1];
       return last?.textContent?.trim() ?? '';
-    }, { sel: CHATGPT_RESPONSE_SEL, prev: previousCount });
+    }, { sel: SELECTORS.chatgpt.response, prev: previousCount });
 
     if (currentText.length > 0 && currentText === lastText) {
       stableCount++;
       if (stableCount >= stableThreshold) {
         // 安定したら innerHTML を返す（.markdown 要素があればそれを優先）
-        const html: string = await chatgptPage.evaluate(({ sel, prev }) => {
+        const html: string = await chatgptPage.evaluate(({ sel, prev, contentSel }) => {
           const responses = document.querySelectorAll(sel);
           const newResponses = Array.from(responses).slice(prev);
           if (newResponses.length === 0) return '';
           const last = newResponses[newResponses.length - 1];
-          const markdown = last?.querySelector('.markdown, .prose');
+          const markdown = last?.querySelector(contentSel);
           return (markdown ?? last)?.innerHTML ?? '';
-        }, { sel: CHATGPT_RESPONSE_SEL, prev: previousCount });
+        }, { sel: SELECTORS.chatgpt.response, prev: previousCount, contentSel: SELECTORS.chatgpt.content });
         return html;
       }
     } else {
@@ -233,11 +233,12 @@ await inputPage.exposeFunction('sendToGemini', async (text: string, entryId: str
 
   await geminiPage.bringToFront();
 
-  const inputSelector = 'rich-textarea div[contenteditable="true"], rich-textarea div.ql-editor';
+  const inputSelector = SELECTORS.gemini.input;
   await geminiPage.waitForSelector(inputSelector, { timeout: 15000 });
 
   lastPreviousGeminiCount = await geminiPage.evaluate(
-    () => document.querySelectorAll('model-response').length
+    (sel) => document.querySelectorAll(sel).length,
+    SELECTORS.gemini.response
   );
 
   // ① 入力チェック＆リトライ付きタイピング
@@ -260,7 +261,7 @@ await inputPage.exposeFunction('sendToGemini', async (text: string, entryId: str
   }
 
   // ② 送信
-  const sendBtn = geminiPage.locator('div.send-button-container button').first();
+  const sendBtn = geminiPage.locator(SELECTORS.gemini.sendBtn).first();
   await sendBtn.click();
   // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
   await new Promise(r => setTimeout(r, 500));
@@ -270,7 +271,8 @@ await inputPage.exposeFunction('sendToGemini', async (text: string, entryId: str
   const sendTimeout = Date.now() + 15000;
   while (Date.now() < sendTimeout) {
     const count: number = await geminiPage.evaluate(
-      () => document.querySelectorAll('model-response').length
+      (sel) => document.querySelectorAll(sel).length,
+      SELECTORS.gemini.response
     );
     if (count > lastPreviousGeminiCount) break;
     await new Promise(r => setTimeout(r, 300));
@@ -307,7 +309,7 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
 
   await chatgptPage.bringToFront();
 
-  const inputSelector = '#prompt-textarea';
+  const inputSelector = SELECTORS.chatgpt.input;
   try {
     await chatgptPage.waitForSelector(inputSelector, { timeout: 15000 });
   } catch {
@@ -321,7 +323,7 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
   // 送信前の assistant メッセージ数を記録
   const previousCount: number = await chatgptPage.evaluate(
     (sel) => document.querySelectorAll(sel).length,
-    CHATGPT_RESPONSE_SEL
+    SELECTORS.chatgpt.response
   );
   lastPreviousChatGPTCount = previousCount;
 
@@ -331,12 +333,12 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
       chatgptPage,
       inputSelector,
       text,
-      async () => await chatgptPage.evaluate(() => {
-        const el = document.querySelector('#prompt-textarea');
+      async () => await chatgptPage.evaluate((sel) => {
+        const el = document.querySelector(sel);
         if (!el) return '';
         // textarea は .value、contenteditable div は .innerText で取得
         return ((el as HTMLTextAreaElement).value ?? (el as HTMLElement).innerText ?? '').trim();
-      })
+      }, SELECTORS.chatgpt.input)
     );
   } catch (err: any) {
     console.error(`ChatGPT 入力失敗: ${err.message}`);
@@ -349,7 +351,7 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
   }
 
   // ② 送信ボタンをクリック
-  const sendBtn = chatgptPage.locator('button[data-testid="send-button"]').first();
+  const sendBtn = chatgptPage.locator(SELECTORS.chatgpt.sendBtn).first();
   await sendBtn.click();
   // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
   await new Promise(r => setTimeout(r, 500));
@@ -379,14 +381,6 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
 });
 
 // ─────────────────────────────────────────────────────────────────
-// Claude セレクタ定数
-// ─────────────────────────────────────────────────────────────────
-// data-is-streaming 属性を持つコンテナ単位でカウント・完了判定する
-const CLAUDE_RESPONSE_SEL = '[data-is-streaming]';
-const CLAUDE_INPUT_SEL    = '[data-testid="chat-input"], .tiptap.ProseMirror, [role="textbox"]';
-const CLAUDE_SEND_BTN_SEL = 'button[aria-label*="Send"], button[aria-label*="送信"], button[aria-label*="メッセージを送信"]';
-
-// ─────────────────────────────────────────────────────────────────
 // Claude 回答待機（data-is-streaming 属性で完了を検出）
 // ─────────────────────────────────────────────────────────────────
 async function waitForClaudeResponse(
@@ -399,7 +393,7 @@ async function waitForClaudeResponse(
   while (Date.now() - start < timeoutMs) {
     const count: number = await claudePage.evaluate(
       (sel) => document.querySelectorAll(sel).length,
-      CLAUDE_RESPONSE_SEL
+      SELECTORS.claude.response
     );
     if (count > previousCount) break;
     await new Promise(r => setTimeout(r, 500));
@@ -408,9 +402,9 @@ async function waitForClaudeResponse(
   // data-is-streaming="true" の要素がなくなるまで待機（生成完了）
   const deadline = start + timeoutMs;
   while (Date.now() < deadline) {
-    const isStreaming: boolean = await claudePage.evaluate(() => {
-      return document.querySelector('[data-is-streaming="true"]') !== null;
-    });
+    const isStreaming: boolean = await claudePage.evaluate((sel) => {
+      return document.querySelector(sel) !== null;
+    }, SELECTORS.claude.streaming);
     if (!isStreaming) break;
     await new Promise(r => setTimeout(r, 800));
   }
@@ -420,15 +414,23 @@ async function waitForClaudeResponse(
   }
 
   // 最後の回答コンテナから innerHTML を取得
-  // .font-claude-response があればそれを優先、なければコンテナ全体
-  const html: string = await claudePage.evaluate((prev) => {
-    const containers = document.querySelectorAll('[data-is-streaming]');
+  // .font-claude-message-content / .font-claude-response 等があればそれを優先，
+  // 見つからない場合は innerText のみ取得（SVG 等のノイズを排除）
+  const html: string = await claudePage.evaluate(({ prev, responseSel, contentSel }) => {
+    const containers = document.querySelectorAll(responseSel);
     const newContainers = Array.from(containers).slice(prev);
     if (newContainers.length === 0) return '';
     const last = newContainers[newContainers.length - 1] as HTMLElement;
-    const content = last.querySelector('.font-claude-response') ?? last;
-    return (content as HTMLElement).innerHTML ?? '';
-  }, previousCount);
+    const content = last.querySelector(contentSel);
+    if (content) {
+      // 本文エリアが見つかった場合：リッチな HTML を返す
+      return (content as HTMLElement).innerHTML ?? '';
+    } else {
+      // 見つからなかった場合（フォールバック）：テキストのみ取得（SVG / ボタンなどノイズを完全排除）
+      const text = (last as HTMLElement).innerText?.trim() ?? '';
+      return text ? `<div style="white-space: pre-wrap;">${text}</div>` : '';
+    }
+  }, { prev: previousCount, responseSel: SELECTORS.claude.response, contentSel: SELECTORS.claude.content });
 
   if (!html) {
     throw new Error('Claude の回答が空でした。');
@@ -445,7 +447,7 @@ await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: str
   await claudePage.bringToFront();
 
   try {
-    await claudePage.waitForSelector(CLAUDE_INPUT_SEL, { timeout: 15000 });
+    await claudePage.waitForSelector(SELECTORS.claude.input, { timeout: 15000 });
   } catch {
     await inputPage.evaluate(
       ({ id, msg }) => { (window as any).updateClaudeResponseError(id, msg); },
@@ -456,7 +458,7 @@ await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: str
 
   const previousCount: number = await claudePage.evaluate(
     (sel) => document.querySelectorAll(sel).length,
-    CLAUDE_RESPONSE_SEL
+    SELECTORS.claude.response
   );
   lastPreviousClaudeCount = previousCount;
 
@@ -464,14 +466,14 @@ await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: str
   try {
     await typeWithRetry(
       claudePage,
-      CLAUDE_INPUT_SEL,
+      SELECTORS.claude.input,
       text,
       async () => await claudePage.evaluate((sel) => {
         const el = document.querySelector(sel);
         if (!el) return '';
         // ProseMirror は innerText が改行を正しく反映する
         return ((el as HTMLElement).innerText ?? el.textContent ?? '').trim();
-      }, CLAUDE_INPUT_SEL)
+      }, SELECTORS.claude.input)
     );
   } catch (err: any) {
     console.error(`Claude 入力失敗: ${err.message}`);
@@ -484,7 +486,7 @@ await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: str
   }
 
   // ② 送信
-  const sendBtn = claudePage.locator(CLAUDE_SEND_BTN_SEL).first();
+  const sendBtn = claudePage.locator(SELECTORS.claude.sendBtn).first();
   await sendBtn.click();
   // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
   await new Promise(r => setTimeout(r, 500));
@@ -514,12 +516,6 @@ await inputPage.exposeFunction('sendToClaude', async (text: string, entryId: str
 });
 
 // ─────────────────────────────────────────────────────────────────
-// Perplexity セレクタ定数
-// ─────────────────────────────────────────────────────────────────
-const PERPLEXITY_RESPONSE_SEL = '.prose';
-const PERPLEXITY_INPUT_SEL    = 'textarea[placeholder], div[contenteditable="true"]';
-
-// ─────────────────────────────────────────────────────────────────
 // Perplexity 回答待機（安定判定は textContent、返却は innerHTML）
 // ─────────────────────────────────────────────────────────────────
 async function waitForPerplexityResponse(
@@ -536,7 +532,7 @@ async function waitForPerplexityResponse(
   while (Date.now() - start < timeoutMs) {
     const count: number = await perplexityPage.evaluate(
       (sel) => document.querySelectorAll(sel).length,
-      PERPLEXITY_RESPONSE_SEL
+      SELECTORS.perplexity.response
     );
     if (count > previousCount) break;
     await new Promise(r => setTimeout(r, 500));
@@ -549,7 +545,7 @@ async function waitForPerplexityResponse(
       if (newResponses.length === 0) return '';
       const last = newResponses[newResponses.length - 1];
       return last?.textContent?.trim() ?? '';
-    }, { sel: PERPLEXITY_RESPONSE_SEL, prev: previousCount });
+    }, { sel: SELECTORS.perplexity.response, prev: previousCount });
 
     if (currentText.length > 0 && currentText === lastText) {
       stableCount++;
@@ -560,7 +556,7 @@ async function waitForPerplexityResponse(
           if (newResponses.length === 0) return '';
           const last = newResponses[newResponses.length - 1];
           return last?.innerHTML ?? '';
-        }, { sel: PERPLEXITY_RESPONSE_SEL, prev: previousCount });
+        }, { sel: SELECTORS.perplexity.response, prev: previousCount });
         return html;
       }
     } else {
@@ -584,7 +580,7 @@ await inputPage.exposeFunction('sendToPerplexity', async (text: string, entryId:
   await perplexityPage.goto(PERPLEXITY_URL, { waitUntil: 'domcontentloaded' });
 
   try {
-    await perplexityPage.waitForSelector(PERPLEXITY_INPUT_SEL, { timeout: 15000 });
+    await perplexityPage.waitForSelector(SELECTORS.perplexity.input, { timeout: 15000 });
   } catch {
     await inputPage.evaluate(
       ({ id, msg }) => { (window as any).updatePerplexityResponseError(id, msg); },
@@ -595,7 +591,7 @@ await inputPage.exposeFunction('sendToPerplexity', async (text: string, entryId:
 
   const previousCount: number = await perplexityPage.evaluate(
     (sel) => document.querySelectorAll(sel).length,
-    PERPLEXITY_RESPONSE_SEL
+    SELECTORS.perplexity.response
   );
   lastPreviousPerplexityCount = previousCount;
 
@@ -603,13 +599,13 @@ await inputPage.exposeFunction('sendToPerplexity', async (text: string, entryId:
   try {
     await typeWithRetry(
       perplexityPage,
-      PERPLEXITY_INPUT_SEL,
+      SELECTORS.perplexity.input,
       text,
       async () => await perplexityPage.evaluate((sel) => {
         const el = document.querySelector(sel);
         if (!el) return '';
         return ((el as HTMLInputElement).value ?? el.textContent ?? '').trim();
-      }, PERPLEXITY_INPUT_SEL)
+      }, SELECTORS.perplexity.input)
     );
   } catch (err: any) {
     console.error(`Perplexity 入力失敗: ${err.message}`);
