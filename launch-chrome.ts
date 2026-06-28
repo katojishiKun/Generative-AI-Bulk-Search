@@ -112,17 +112,17 @@ export async function launchChrome(): Promise<LaunchChromeResult> {
   // ── 初回起動の検出 ──────────────────────────────────────────────────
   // chrome-profile フォルダが存在しない = 一度もログインセットアップをしていない状態。
   // このまま各タブを開いてもすべて未ログイン状態になるため、
-  // setup_login.bat で先にログインするよう案内して終了する。
+  // 生成AI初回設定.bat で先にログインするよう案内して終了する。
   const isFirstRun = !fs.existsSync(USER_DATA_DIR);
   if (isFirstRun) {
     console.log('');
     console.log('════════════════════════════════════════════════════════════');
     console.log('  【初回セットアップが必要です】');
     console.log('');
-    console.log('  まず setup_login.bat を実行して');
+    console.log('  まず 生成AI初回設定.bat を実行して');
     console.log('  各 AI サービスにログインしてください。');
     console.log('');
-    console.log('  ログイン完了後、改めて run_chrome.bat を実行してください。');
+    console.log('  ログイン完了後、改めて 生成AI一括検索.bat を実行してください。');
     console.log('  次回以降はログイン状態が自動的に維持されます。');
     console.log('════════════════════════════════════════════════════════════');
     console.log('');
