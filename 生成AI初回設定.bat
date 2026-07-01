@@ -44,4 +44,3 @@ start "" "%CHROME_EXE%" --user-data-dir="%~dp0chrome-profile" --no-first-run --n
 echo Chrome launched. Login to each AI service then close Chrome.
 echo After that, run 生成AI一括検索.bat.
 echo.
-pause
