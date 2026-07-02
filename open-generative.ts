@@ -738,6 +738,144 @@ await inputPage.exposeFunction('retryGetResponse', async (_question: string, tar
 
 console.log('準備完了。generative.html の送信ボタンを押してください。');
 
+// ─────────────────────────────────────────────────────────────────
+// まとめ送信（新規チャットスレッドへ遷移して合成プロンプトを送信）
+// ─────────────────────────────────────────────────────────────────
+await inputPage.exposeFunction('sendSummary', async (prompt: string, target: string) => {
+  console.log(`まとめ送信 (target: ${target}, prompt: ${prompt.length}文字)`);
+
+  // 送信先AIに応じたページと新規URL・waitFor関数を選択
+  type SummaryConfig = {
+    page: typeof geminiPage;
+    newUrl: string;
+    inputSelector: string;
+    sendMethod: 'button' | 'enter';
+    sendBtnSelector?: string;
+    waitForResponse: (prev: number) => Promise<string>;
+    getTextFn: () => Promise<string>;
+  };
+
+  const configMap: Record<string, SummaryConfig> = {
+    gemini: {
+      page:            geminiPage,
+      newUrl:          GEMINI_URL,
+      inputSelector:   SELECTORS.gemini.input,
+      sendMethod:      'button',
+      sendBtnSelector: SELECTORS.gemini.sendBtn,
+      waitForResponse: (prev) => waitForGeminiResponse(prev),
+      getTextFn:       async () => await geminiPage.evaluate((sel) =>
+        document.querySelector(sel)?.textContent?.trim() ?? '', SELECTORS.gemini.input),
+    },
+    chatgpt: {
+      page:            chatgptPage,
+      newUrl:          CHATGPT_URL,
+      inputSelector:   SELECTORS.chatgpt.input,
+      sendMethod:      'button',
+      sendBtnSelector: SELECTORS.chatgpt.sendBtn,
+      waitForResponse: (prev) => waitForChatGPTResponse(prev),
+      getTextFn:       async () => await chatgptPage.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return '';
+        return ((el as HTMLTextAreaElement).value ?? (el as HTMLElement).innerText ?? '').trim();
+      }, SELECTORS.chatgpt.input),
+    },
+    claude: {
+      page:            claudePage,
+      newUrl:          CLAUDE_URL,
+      inputSelector:   SELECTORS.claude.input,
+      sendMethod:      'button',
+      sendBtnSelector: SELECTORS.claude.sendBtn,
+      waitForResponse: (prev) => waitForClaudeResponse(prev),
+      getTextFn:       async () => await claudePage.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return '';
+        return ((el as HTMLElement).innerText ?? el.textContent ?? '').trim();
+      }, SELECTORS.claude.input),
+    },
+    perplexity: {
+      page:            perplexityPage,
+      newUrl:          PERPLEXITY_URL,
+      inputSelector:   SELECTORS.perplexity.input,
+      sendMethod:      'enter',
+      waitForResponse: (prev) => waitForPerplexityResponse(prev),
+      getTextFn:       async () => await perplexityPage.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return '';
+        return ((el as HTMLInputElement).value ?? el.textContent ?? '').trim();
+      }, SELECTORS.perplexity.input),
+    },
+  };
+
+  const cfg = configMap[target];
+  if (!cfg) {
+    await inputPage.evaluate(
+      ({ msg }) => { (window as any).updateSummaryResponseError(msg); },
+      { msg: `未対応のまとめ先 AI です: ${target}` }
+    );
+    return;
+  }
+
+  try {
+    // ① 新規チャットURLへ遷移（既存スレッドを汚さない）
+    await cfg.page.bringToFront();
+    await cfg.page.goto(cfg.newUrl, { waitUntil: 'domcontentloaded' });
+    await cfg.page.waitForSelector(cfg.inputSelector, { timeout: 15000 });
+
+    // ② 遷移直後の応答数を記録（新規チャットなので 0 になるはず）
+    const responseSelector =
+      target === 'gemini'     ? SELECTORS.gemini.response :
+      target === 'chatgpt'    ? SELECTORS.chatgpt.response :
+      target === 'claude'     ? SELECTORS.claude.response :
+                                SELECTORS.perplexity.response;
+    const previousCount: number = await cfg.page.evaluate(
+      (sel) => document.querySelectorAll(sel).length, responseSelector
+    );
+
+    // ③ 合成プロンプトを入力（リトライ付き）
+    await typeWithRetry(cfg.page, cfg.inputSelector, prompt, cfg.getTextFn);
+
+    // ④ 送信
+    if (cfg.sendMethod === 'button' && cfg.sendBtnSelector) {
+      const sendBtn = cfg.page.locator(cfg.sendBtnSelector).first();
+      await sendBtn.click();
+    } else {
+      await cfg.page.keyboard.press('Enter');
+    }
+    await new Promise(r => setTimeout(r, 500));
+    console.log(`まとめ送信完了 (target: ${target}, 送信前応答数: ${previousCount})`);
+
+    await inputPage.bringToFront();
+
+    // ⑤ 回答待機・取得（fire-and-forget）
+    const capturedCount = previousCount;
+    void (async () => {
+      try {
+        const answer = await cfg.waitForResponse(capturedCount);
+        console.log(`まとめ回答取得完了 (${answer.length} 文字)`);
+        await inputPage.evaluate(
+          ({ a }) => { (window as any).updateSummaryResponse(a); },
+          { a: answer }
+        );
+      } catch (err: any) {
+        console.error(`まとめ回答取得失敗: ${err.message}`);
+        await inputPage.evaluate(
+          ({ msg }) => { (window as any).updateSummaryResponseError(msg); },
+          { msg: err.message }
+        );
+      }
+    })();
+
+  } catch (err: any) {
+    console.error(`まとめ送信エラー: ${err.message}`);
+    await inputPage.bringToFront();
+    await inputPage.evaluate(
+      ({ msg }) => { (window as any).updateSummaryResponseError(msg); },
+      { msg: err.message }
+    );
+  }
+});
+
+
 // ブラウザが閉じられるまで待機
 // ※ chromeProcess は既存セッション再利用時に null の場合があるため ?. で安全に呼び出す
 await new Promise<void>((resolve) => {
