@@ -744,70 +744,53 @@ console.log('準備完了。generative.html の送信ボタンを押してくだ
 await inputPage.exposeFunction('sendSummary', async (prompt: string, target: string, entryId: string) => {
   console.log(`まとめ送信 (target: ${target}, entryId: ${entryId}, prompt: ${prompt.length}文字)`);
 
-  // 送信先AIに応じたページと新規URL・waitFor関数を選択
-  type SummaryConfig = {
-    page: typeof geminiPage;
+  // ─── まとめ先AI の URL / セレクタ情報 ───────────────────────────
+  type SummaryTargetConfig = {
     newUrl: string;
     inputSelector: string;
     sendMethod: 'button' | 'enter';
     sendBtnSelector?: string;
-    waitForResponse: (prev: number) => Promise<string>;
-    getTextFn: () => Promise<string>;
+    responseSelector: string;
+    contentSelector?: string;
+    streamingSelector?: string;
   };
 
-  const configMap: Record<string, SummaryConfig> = {
+  const targetConfigMap: Record<string, SummaryTargetConfig> = {
     gemini: {
-      page:            geminiPage,
       newUrl:          GEMINI_URL,
       inputSelector:   SELECTORS.gemini.input,
       sendMethod:      'button',
       sendBtnSelector: SELECTORS.gemini.sendBtn,
-      waitForResponse: (prev) => waitForGeminiResponse(prev),
-      getTextFn:       async () => await geminiPage.evaluate((sel) =>
-        document.querySelector(sel)?.textContent?.trim() ?? '', SELECTORS.gemini.input),
+      responseSelector: SELECTORS.gemini.response,
+      contentSelector:  SELECTORS.gemini.content,
     },
     chatgpt: {
-      page:            chatgptPage,
       newUrl:          CHATGPT_URL,
       inputSelector:   SELECTORS.chatgpt.input,
       sendMethod:      'button',
       sendBtnSelector: SELECTORS.chatgpt.sendBtn,
-      waitForResponse: (prev) => waitForChatGPTResponse(prev),
-      getTextFn:       async () => await chatgptPage.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return '';
-        return ((el as HTMLTextAreaElement).value ?? (el as HTMLElement).innerText ?? '').trim();
-      }, SELECTORS.chatgpt.input),
+      responseSelector: SELECTORS.chatgpt.response,
+      contentSelector:  SELECTORS.chatgpt.content,
     },
     claude: {
-      page:            claudePage,
-      newUrl:          CLAUDE_URL,
-      inputSelector:   SELECTORS.claude.input,
-      sendMethod:      'button',
-      sendBtnSelector: SELECTORS.claude.sendBtn,
-      waitForResponse: (prev) => waitForClaudeResponse(prev),
-      getTextFn:       async () => await claudePage.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return '';
-        return ((el as HTMLElement).innerText ?? el.textContent ?? '').trim();
-      }, SELECTORS.claude.input),
+      newUrl:           CLAUDE_URL,
+      inputSelector:    SELECTORS.claude.input,
+      sendMethod:       'button',
+      sendBtnSelector:  SELECTORS.claude.sendBtn,
+      responseSelector: SELECTORS.claude.response,
+      streamingSelector: SELECTORS.claude.streaming,
+      contentSelector:  SELECTORS.claude.content,
     },
     perplexity: {
-      page:            perplexityPage,
-      newUrl:          PERPLEXITY_URL,
-      inputSelector:   SELECTORS.perplexity.input,
-      sendMethod:      'enter',
-      waitForResponse: (prev) => waitForPerplexityResponse(prev),
-      getTextFn:       async () => await perplexityPage.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return '';
-        return ((el as HTMLInputElement).value ?? el.textContent ?? '').trim();
-      }, SELECTORS.perplexity.input),
+      newUrl:           PERPLEXITY_URL,
+      inputSelector:    SELECTORS.perplexity.input,
+      sendMethod:       'enter',
+      responseSelector: SELECTORS.perplexity.response,
     },
   };
 
-  const cfg = configMap[target];
-  if (!cfg) {
+  const tcfg = targetConfigMap[target];
+  if (!tcfg) {
     await inputPage.evaluate(
       ({ msg, id }) => { (window as any).updateSummaryResponseError(msg, id); },
       { msg: `未対応のまとめ先 AI です: ${target}`, id: entryId }
@@ -815,53 +798,158 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
     return;
   }
 
-  try {
-    // ① 新規チャットURLへ遷移（既存スレッドを汚さない）
-    await cfg.page.bringToFront();
-    await cfg.page.goto(cfg.newUrl, { waitUntil: 'domcontentloaded' });
-    await cfg.page.waitForSelector(cfg.inputSelector, { timeout: 15000 });
+  // ─── ① 完全に新しい使い捨てタブを作成 ──────────────────────────
+  // 既存の送信先タブ（geminiPage 等）には一切手を触れない。
+  // まとめ専用の一時タブで処理し、回答取得後に自動で閉じる。
+  const summaryPage = await context.newPage();
+  console.log('まとめ専用タブを作成しました。');
 
-    // ② 遷移直後の応答数を記録（新規チャットなので 0 になるはず）
-    const responseSelector =
-      target === 'gemini'     ? SELECTORS.gemini.response :
-      target === 'chatgpt'    ? SELECTORS.chatgpt.response :
-      target === 'claude'     ? SELECTORS.claude.response :
-                                SELECTORS.perplexity.response;
-    const previousCount: number = await cfg.page.evaluate(
-      (sel) => document.querySelectorAll(sel).length, responseSelector
+  try {
+    // ─── ② 新規チャット URL へ遷移 ─────────────────────────────
+    await summaryPage.bringToFront();
+    await summaryPage.goto(tcfg.newUrl, { waitUntil: 'domcontentloaded' });
+    await summaryPage.waitForSelector(tcfg.inputSelector, { timeout: 15000 });
+
+    // ─── ③ 遷移直後の応答数を記録（新規タブなので 0 になるはず） ──
+    const previousCount: number = await summaryPage.evaluate(
+      (sel) => document.querySelectorAll(sel).length, tcfg.responseSelector
     );
 
-    // ③ 合成プロンプトを入力（リトライ付き）
-    await typeWithRetry(cfg.page, cfg.inputSelector, prompt, cfg.getTextFn);
+    // ─── ④ 合成プロンプトを入力（リトライ付き）─────────────────────
+    await typeWithRetry(
+      summaryPage,
+      tcfg.inputSelector,
+      prompt,
+      async () => await summaryPage.evaluate((sel) => {
+        const el = document.querySelector(sel) as HTMLElement | HTMLInputElement | HTMLTextAreaElement | null;
+        if (!el) return '';
+        return (('value' in el ? el.value : null) ?? el.innerText ?? el.textContent ?? '').trim();
+      }, tcfg.inputSelector)
+    );
 
-    // ④ 送信
-    if (cfg.sendMethod === 'button' && cfg.sendBtnSelector) {
-      const sendBtn = cfg.page.locator(cfg.sendBtnSelector).first();
+    // ─── ⑤ 送信 ────────────────────────────────────────────────
+    if (tcfg.sendMethod === 'button' && tcfg.sendBtnSelector) {
+      const sendBtn = summaryPage.locator(tcfg.sendBtnSelector).first();
       await sendBtn.click();
     } else {
-      await cfg.page.keyboard.press('Enter');
+      await summaryPage.keyboard.press('Enter');
     }
     await new Promise(r => setTimeout(r, 500));
     console.log(`まとめ送信完了 (target: ${target}, 送信前応答数: ${previousCount})`);
 
+    // inputPage を前面に戻す（ユーザーが操作できるように）
     await inputPage.bringToFront();
 
-    // ⑤ 回答待機・取得（fire-and-forget）
+    // ─── ⑥ 回答待機・取得（fire-and-forget） ─────────────────────
+    // 既存の waitFor〜 関数はメインページ変数を参照しているため流用せず、
+    // summaryPage に対してインラインで同等の待機ロジックを実装する。
     const capturedCount = previousCount;
     void (async () => {
+      const RESPONSE_TIMEOUT_MS_SUMMARY = 90_000;
+      const pollInterval = 1500;
+      const stableThreshold = 3;
+      const start = Date.now();
+
       try {
-        const answer = await cfg.waitForResponse(capturedCount);
+        let answer = '';
+
+        if (target === 'claude') {
+          // Claude: data-is-streaming が消えたら完了
+          while (Date.now() - start < RESPONSE_TIMEOUT_MS_SUMMARY) {
+            const count: number = await summaryPage.evaluate(
+              (sel) => document.querySelectorAll(sel).length, tcfg.responseSelector
+            );
+            if (count > capturedCount) break;
+            await new Promise(r => setTimeout(r, 500));
+          }
+          const deadline = start + RESPONSE_TIMEOUT_MS_SUMMARY;
+          while (Date.now() < deadline) {
+            const isStreaming: boolean = await summaryPage.evaluate(
+              (sel) => document.querySelector(sel) !== null, tcfg.streamingSelector!
+            );
+            if (!isStreaming) break;
+            await new Promise(r => setTimeout(r, 800));
+          }
+          if (Date.now() >= start + RESPONSE_TIMEOUT_MS_SUMMARY) {
+            throw new Error(`Claude のまとめ応答がタイムアウトしました。`);
+          }
+          answer = await summaryPage.evaluate(({ prev, responseSel, contentSel }) => {
+            const containers = document.querySelectorAll(responseSel);
+            const newContainers = Array.from(containers).slice(prev);
+            if (newContainers.length === 0) return '';
+            const last = newContainers[newContainers.length - 1] as HTMLElement;
+            const content = last.querySelector(contentSel);
+            if (content) return (content as HTMLElement).innerHTML ?? '';
+            const text = last.innerText?.trim() ?? '';
+            return text ? `<div style="white-space: pre-wrap;">${text}</div>` : '';
+          }, { prev: capturedCount, responseSel: tcfg.responseSelector, contentSel: tcfg.contentSelector ?? '' });
+
+        } else {
+          // Gemini / ChatGPT / Perplexity: テキストが安定するまでポーリング
+          while (Date.now() - start < RESPONSE_TIMEOUT_MS_SUMMARY) {
+            const count: number = await summaryPage.evaluate(
+              (sel) => document.querySelectorAll(sel).length, tcfg.responseSelector
+            );
+            if (count > capturedCount) break;
+            await new Promise(r => setTimeout(r, 500));
+          }
+
+          let lastText = '';
+          let stableCount = 0;
+          while (Date.now() - start < RESPONSE_TIMEOUT_MS_SUMMARY) {
+            const currentText: string = await summaryPage.evaluate(({ sel, prev }) => {
+              const responses = document.querySelectorAll(sel);
+              const newResponses = Array.from(responses).slice(prev);
+              if (newResponses.length === 0) return '';
+              const last = newResponses[newResponses.length - 1];
+              return last?.textContent?.trim() ?? '';
+            }, { sel: tcfg.responseSelector, prev: capturedCount });
+
+            if (currentText.length > 0 && currentText === lastText) {
+              stableCount++;
+              if (stableCount >= stableThreshold) {
+                // 安定したら innerHTML を取得
+                answer = await summaryPage.evaluate(({ sel, prev, contentSel }) => {
+                  const responses = document.querySelectorAll(sel);
+                  const newResponses = Array.from(responses).slice(prev);
+                  if (newResponses.length === 0) return '';
+                  const last = newResponses[newResponses.length - 1];
+                  if (contentSel) {
+                    const content = last?.querySelector(contentSel);
+                    return (content ?? last)?.innerHTML ?? '';
+                  }
+                  return last?.innerHTML ?? '';
+                }, { sel: tcfg.responseSelector, prev: capturedCount, contentSel: tcfg.contentSelector ?? '' });
+                break;
+              }
+            } else {
+              stableCount = 0;
+              lastText = currentText;
+            }
+            await new Promise(r => setTimeout(r, pollInterval));
+          }
+
+          if (!answer) throw new Error(`まとめ応答がタイムアウトしました（${RESPONSE_TIMEOUT_MS_SUMMARY / 1000}秒）。`);
+        }
+
         console.log(`まとめ回答取得完了 (${answer.length} 文字)`);
         await inputPage.evaluate(
           ({ a, id }) => { (window as any).updateSummaryResponse(a, id); },
           { a: answer, id: entryId }
         );
+
       } catch (err: any) {
         console.error(`まとめ回答取得失敗: ${err.message}`);
         await inputPage.evaluate(
           ({ msg, id }) => { (window as any).updateSummaryResponseError(msg, id); },
           { msg: err.message, id: entryId }
         );
+      } finally {
+        // ─── ⑦ 使い捨てタブを閉じる（送信先タブは影響を受けない）──
+        if (!summaryPage.isClosed()) {
+          await summaryPage.close();
+          console.log('まとめ専用タブを閉じました。');
+        }
       }
     })();
 
@@ -872,6 +960,10 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
       ({ msg, id }) => { (window as any).updateSummaryResponseError(msg, id); },
       { msg: err.message, id: entryId }
     );
+    if (!summaryPage.isClosed()) {
+      await summaryPage.close();
+      console.log('まとめ専用タブを閉じました（エラー時）。');
+    }
   }
 });
 
