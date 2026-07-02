@@ -741,8 +741,8 @@ console.log('準備完了。generative.html の送信ボタンを押してくだ
 // ─────────────────────────────────────────────────────────────────
 // まとめ送信（新規チャットスレッドへ遷移して合成プロンプトを送信）
 // ─────────────────────────────────────────────────────────────────
-await inputPage.exposeFunction('sendSummary', async (prompt: string, target: string) => {
-  console.log(`まとめ送信 (target: ${target}, prompt: ${prompt.length}文字)`);
+await inputPage.exposeFunction('sendSummary', async (prompt: string, target: string, entryId: string) => {
+  console.log(`まとめ送信 (target: ${target}, entryId: ${entryId}, prompt: ${prompt.length}文字)`);
 
   // 送信先AIに応じたページと新規URL・waitFor関数を選択
   type SummaryConfig = {
@@ -809,8 +809,8 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
   const cfg = configMap[target];
   if (!cfg) {
     await inputPage.evaluate(
-      ({ msg }) => { (window as any).updateSummaryResponseError(msg); },
-      { msg: `未対応のまとめ先 AI です: ${target}` }
+      ({ msg, id }) => { (window as any).updateSummaryResponseError(msg, id); },
+      { msg: `未対応のまとめ先 AI です: ${target}`, id: entryId }
     );
     return;
   }
@@ -853,14 +853,14 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
         const answer = await cfg.waitForResponse(capturedCount);
         console.log(`まとめ回答取得完了 (${answer.length} 文字)`);
         await inputPage.evaluate(
-          ({ a }) => { (window as any).updateSummaryResponse(a); },
-          { a: answer }
+          ({ a, id }) => { (window as any).updateSummaryResponse(a, id); },
+          { a: answer, id: entryId }
         );
       } catch (err: any) {
         console.error(`まとめ回答取得失敗: ${err.message}`);
         await inputPage.evaluate(
-          ({ msg }) => { (window as any).updateSummaryResponseError(msg); },
-          { msg: err.message }
+          ({ msg, id }) => { (window as any).updateSummaryResponseError(msg, id); },
+          { msg: err.message, id: entryId }
         );
       }
     })();
@@ -869,8 +869,8 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
     console.error(`まとめ送信エラー: ${err.message}`);
     await inputPage.bringToFront();
     await inputPage.evaluate(
-      ({ msg }) => { (window as any).updateSummaryResponseError(msg); },
-      { msg: err.message }
+      ({ msg, id }) => { (window as any).updateSummaryResponseError(msg, id); },
+      { msg: err.message, id: entryId }
     );
   }
 });

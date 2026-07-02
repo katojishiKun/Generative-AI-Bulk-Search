@@ -119,22 +119,16 @@ button:disabled {
   color: #c00;
 }
 
-/* まとめ結果表示エリア */
-#summary-result {
-  display: none;
-  margin-top: 12px;
-  margin-bottom: 24px;
-  border: 2px solid #4a7fc1;
-  border-radius: 8px;
-  min-height: 80px;
-  overflow: hidden;
+/* まとめエントリー（履歴内インライン表示）*/
+.summary-entry {
+  border-color: #4a7fc1;
 }
 
-.summary-result-placeholder {
-  padding: 16px;
-  color: #aaa;
-  font-style: italic;
-  font-size: 0.9em;
+.summary-result-inline {
+  margin-top: 10px;
+  border: 2px solid #4a7fc1;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .summary-result-body {
