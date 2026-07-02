@@ -6,15 +6,15 @@ import { SELECTORS } from './selectors.ts';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const PAGE_PATH = `file:///${path.join(__dirname, 'generative.html').replace(/\\/g, '/')}`;
-const GEMINI_URL      = 'https://gemini.google.com/u/0/app';
-const CHATGPT_URL     = 'https://chatgpt.com/';
-const CLAUDE_URL      = 'https://claude.ai/new';
-const PERPLEXITY_URL  = 'https://www.perplexity.ai/';
+const GEMINI_URL = 'https://gemini.google.com/u/0/app';
+const CHATGPT_URL = 'https://chatgpt.com/';
+const CLAUDE_URL = 'https://claude.ai/new';
+const PERPLEXITY_URL = 'https://www.perplexity.ai/';
 
 const RESPONSE_TIMEOUT_MS = 90_000;
 
 const MAX_TYPE_RETRIES = 3;
-const RETRY_DELAY_MS   = 1500;
+const RETRY_DELAY_MS = 1500;
 
 // ─────────────────────────────────────────────────────────────────
 // 入力チェック＆リトライ付きタイピング
@@ -54,7 +54,7 @@ async function typeWithRetry(
     await new Promise(r => setTimeout(r, 1000));
 
     const actualText = await getActualText();
-    const actualLen  = actualText.trim().length;
+    const actualLen = actualText.trim().length;
     // 入力元テキストを100%として、85%〜115%の文字数なら許容（改行変換等によるズレを吸収）
     const ratio = expectedLen > 0 ? actualLen / expectedLen : 1;
     if (ratio >= 0.85 && ratio <= 1.15) {
@@ -78,10 +78,9 @@ async function typeWithRetry(
   );
 }
 
-const { context, chromeProcess } = await launchChrome();
+const { context, page: inputPage, chromeProcess } = await launchChrome();
 
 // タブ1: generative.html（入力フォーム）
-const inputPage = await context.newPage();
 await inputPage.goto(PAGE_PATH);
 console.log('入力フォームを開きました。');
 
@@ -757,34 +756,34 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
 
   const targetConfigMap: Record<string, SummaryTargetConfig> = {
     gemini: {
-      newUrl:          GEMINI_URL,
-      inputSelector:   SELECTORS.gemini.input,
-      sendMethod:      'button',
+      newUrl: GEMINI_URL,
+      inputSelector: SELECTORS.gemini.input,
+      sendMethod: 'button',
       sendBtnSelector: SELECTORS.gemini.sendBtn,
       responseSelector: SELECTORS.gemini.response,
-      contentSelector:  SELECTORS.gemini.content,
+      contentSelector: SELECTORS.gemini.content,
     },
     chatgpt: {
-      newUrl:          CHATGPT_URL,
-      inputSelector:   SELECTORS.chatgpt.input,
-      sendMethod:      'button',
+      newUrl: CHATGPT_URL,
+      inputSelector: SELECTORS.chatgpt.input,
+      sendMethod: 'button',
       sendBtnSelector: SELECTORS.chatgpt.sendBtn,
       responseSelector: SELECTORS.chatgpt.response,
-      contentSelector:  SELECTORS.chatgpt.content,
+      contentSelector: SELECTORS.chatgpt.content,
     },
     claude: {
-      newUrl:           CLAUDE_URL,
-      inputSelector:    SELECTORS.claude.input,
-      sendMethod:       'button',
-      sendBtnSelector:  SELECTORS.claude.sendBtn,
+      newUrl: CLAUDE_URL,
+      inputSelector: SELECTORS.claude.input,
+      sendMethod: 'button',
+      sendBtnSelector: SELECTORS.claude.sendBtn,
       responseSelector: SELECTORS.claude.response,
       streamingSelector: SELECTORS.claude.streaming,
-      contentSelector:  SELECTORS.claude.content,
+      contentSelector: SELECTORS.claude.content,
     },
     perplexity: {
-      newUrl:           PERPLEXITY_URL,
-      inputSelector:    SELECTORS.perplexity.input,
-      sendMethod:       'enter',
+      newUrl: PERPLEXITY_URL,
+      inputSelector: SELECTORS.perplexity.input,
+      sendMethod: 'enter',
       responseSelector: SELECTORS.perplexity.response,
     },
   };

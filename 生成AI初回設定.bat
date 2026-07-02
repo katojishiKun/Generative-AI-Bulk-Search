@@ -39,7 +39,7 @@ echo Launching Chrome...
 echo Profile: %~dp0chrome-profile
 echo.
 
-start "" "%CHROME_EXE%" --user-data-dir="%~dp0chrome-profile" --no-first-run --no-default-browser-check
+start "" "%CHROME_EXE%" --user-data-dir="%~dp0chrome-profile" --no-first-run --no-default-browser-check "https://gemini.google.com/" "https://chatgpt.com/" "https://claude.ai/" "https://www.perplexity.ai/"
 
 echo Chrome launched. Login to each AI service then close Chrome.
 echo After that, run 生成AI一括検索.bat.
