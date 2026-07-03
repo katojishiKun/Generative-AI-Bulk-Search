@@ -75,8 +75,8 @@ h1 {
 #prefix-area {
   height: 30px;
   font-size: 0.9em;
-  color: #555;
-  border: 1px solid #ccc;
+  color: #333;
+  border: 1px solid #bcd;
   border-radius: 4px;
   padding: 8px;
   resize: vertical;
@@ -89,6 +89,10 @@ textarea {
   margin-bottom: 8px;
   box-sizing: border-box;
   font-size: 0.95em;
+  color: #333;
+  border: 1px solid #bcd;
+  border-radius: 4px;
+  padding: 8px;
 }
 
 .btn-row {
