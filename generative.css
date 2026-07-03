@@ -23,6 +23,24 @@ h1 {
   margin-bottom: 20px;
 }
 
+/* 送信先ラベルとチェックボックスを同一行に並べる */
+.destination-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.destination-row .destination-label {
+  white-space: nowrap;
+  margin-bottom: 0;
+}
+
+.destination-row .destination-group {
+  margin-bottom: 0;
+  flex: 1;
+}
+
 /* 送信先チェックボックスエリア */
 .destination-label {
   font-size: 0.95em;
@@ -51,6 +69,17 @@ h1 {
   width: 16px;
   height: 16px;
   cursor: pointer;
+}
+
+/* 毎回先頭に挿入する固定文言エリア */
+#prefix-area {
+  height: 30px;
+  font-size: 0.9em;
+  color: #555;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 8px;
+  resize: vertical;
 }
 
 textarea {
@@ -99,7 +128,7 @@ button:disabled {
 
 /* まとめ指示テキストエリア */
 #summary-prompt {
-  height: 80px;
+  height: 120px;
   font-size: 0.9em;
   color: #333;
   border: 1px solid #bcd;

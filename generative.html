@@ -14,27 +14,32 @@
 
     <!-- ─── 左カラム：送信先 ─────────────────────────────── -->
     <div class="send-panel">
-      <!-- 送信先チェックボックス -->
-      <div class="destination-label">送信先</div>
-      <div class="destination-group">
-        <label>
-          <input type="checkbox" id="chk-gemini" value="gemini" checked>
-          Gemini
-        </label>
-        <label>
-          <input type="checkbox" id="chk-chatgpt" value="chatgpt" checked>
-          ChatGPT
-        </label>
-        <label>
-          <input type="checkbox" id="chk-claude" value="claude" checked>
-          Claude
-        </label>
-        <label>
-          <input type="checkbox" id="chk-perplexity" value="perplexity" checked>
-          Perplexity
-        </label>
-        <!-- 将来追加するサービスはここに <label> を追加するだけ -->
+      <!-- 送信先チェックボックス（ラベルとチェックボックスを同一行に配置） -->
+      <div class="destination-row">
+        <span class="destination-label">送信先</span>
+        <div class="destination-group">
+          <label>
+            <input type="checkbox" id="chk-gemini" value="gemini" checked>
+            Gemini
+          </label>
+          <label>
+            <input type="checkbox" id="chk-chatgpt" value="chatgpt" checked>
+            ChatGPT
+          </label>
+          <label>
+            <input type="checkbox" id="chk-claude" value="claude" checked>
+            Claude
+          </label>
+          <label>
+            <input type="checkbox" id="chk-perplexity" value="perplexity" checked>
+            Perplexity
+          </label>
+          <!-- 将来追加するサービスはここに <label> を追加するだけ -->
+        </div>
       </div>
+
+      <!-- 毎回先頭に挿入する固定文言テキストエリア -->
+      <textarea id="prefix-area" placeholder="毎回先頭に挿入する文言"></textarea>
 
       <textarea id="input-area" placeholder="ここに入力してください"></textarea>
       <div class="btn-row">
@@ -46,13 +51,15 @@
 
     <!-- ─── 右カラム：まとめ ───────────────────────────────── -->
     <div class="summary-panel">
-      <!-- まとめ先チェックボックス -->
-      <div class="destination-label">まとめる</div>
-      <div class="destination-group summary-destination-group">
-        <label>
-          <input type="checkbox" id="chk-summary-gemini" value="gemini" checked>
-          Gemini
-        </label>
+      <!-- まとめ先チェックボックス（ラベルとチェックボックスを同一行に配置） -->
+      <div class="destination-row">
+        <span class="destination-label">まとめる</span>
+        <div class="destination-group summary-destination-group">
+          <label>
+            <input type="checkbox" id="chk-summary-gemini" value="gemini" checked>
+            Gemini
+          </label>
+        </div>
       </div>
 
       <!-- まとめ指示テキストエリア -->

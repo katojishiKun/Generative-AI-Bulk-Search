@@ -18,8 +18,12 @@ let lastSummaryEntryId = ''; // まとめエントリの entryId
 
 // ─── 送信ボタン ───────────────────────────────────────────────
 btn.addEventListener('click', async () => {
-  const text = document.getElementById('input-area').value.trim();
-  if (!text) return;
+  const prefixText = document.getElementById('prefix-area').value.trim();
+  const mainText = document.getElementById('input-area').value.trim();
+  if (!mainText) return;
+
+  // 固定文言があれば先頭に挿入（改行区切り）、なければメインのみ
+  const text = prefixText ? `${prefixText}\n${mainText}` : mainText;
 
   // チェックされた送信先を取得
   const checkedTargets = [
@@ -42,6 +46,7 @@ btn.addEventListener('click', async () => {
   // エントリーを作成してプレースホルダーカードを表示
   const entryId = Date.now().toString();
   lastEntryId = entryId;
+  // メインの入力欄のみクリア（固定文言エリアは保持）
   document.getElementById('input-area').value = '';
   createEntry(entryId, text, checkedTargets);
 
