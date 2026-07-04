@@ -5,8 +5,8 @@ echo  First-time Login Setup
 echo ========================================
 echo.
 echo [IMPORTANT] This is required only on first use.
-echo Run 生成AI初回設定.bat once, login to each AI service,
-echo then close Chrome. After that, use 生成AI一括検索.bat.
+echo Run FirstTimeSetup_生成AI初回設定.bat once, login to each AI service,
+echo then close Chrome. After that, use BulkSearch_生成AI一括検索.bat.
 echo.
 echo Please login to each service:
 echo   - Gemini    : https://gemini.google.com/
@@ -42,5 +42,5 @@ echo.
 start "" "%CHROME_EXE%" --user-data-dir="%~dp0chrome-profile" --no-first-run --no-default-browser-check "https://gemini.google.com/" "https://chatgpt.com/" "https://claude.ai/" "https://www.perplexity.ai/"
 
 echo Chrome launched. Login to each AI service then close Chrome.
-echo After that, run 生成AI一括検索.bat.
+echo After that, run BulkSearch_生成AI一括検索.bat.
 echo.
