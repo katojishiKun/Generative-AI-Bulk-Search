@@ -7,7 +7,7 @@ echo ========================================
 
 cd /d "%~dp0"
 
-:: Node.js ã®ãƒ‘ã‚¹ã‚’ç’°å¢ƒå¤‰æ•° PATH ã«è¿½åŠ ï¼ˆæ–°è¦ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ç›´å¾Œãªã©ã®åæ˜ å¯¾ç­–ï¼‰
+:: Node.js ‚ÌƒpƒX‚ðŠÂ‹«•Ï” PATH ‚É’Ç‰ÁiV‹KƒCƒ“ƒXƒg[ƒ‹’¼Œã‚È‚Ç‚Ì”½‰f‘Îôj
 where node >nul 2>nul
 if %errorlevel% neq 0 (
   if exist "C:\Program Files\nodejs" (
