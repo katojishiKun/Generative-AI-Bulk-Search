@@ -5,8 +5,8 @@ echo  First-time Login Setup
 echo ========================================
 echo.
 echo [IMPORTANT] This is required only on first use.
-echo Run FirstTimeSetup_ê∂ê¨AIèââÒê›íË.bat once, login to each AI service,
-echo then close Chrome. After that, use BulkSearch_ê∂ê¨AIàÍäáåüçı.bat.
+echo Run this bat once, login to each AI service,
+echo then close Chrome. After that, use BulkSearch bat.
 echo.
 echo Please login to each service:
 echo   - Gemini    : https://gemini.google.com/
@@ -30,7 +30,7 @@ if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" (
 )
 
 if "%CHROME_EXE%"=="" (
-  echo [ERROR] Chrome not found.
+  echo [ERROR] Chrome not found. Please install Google Chrome.
   pause
   exit /b 1
 )
@@ -42,5 +42,5 @@ echo.
 start "" "%CHROME_EXE%" --user-data-dir="%~dp0chrome-profile" --no-first-run --no-default-browser-check "https://gemini.google.com/" "https://chatgpt.com/" "https://claude.ai/" "https://www.perplexity.ai/"
 
 echo Chrome launched. Login to each AI service then close Chrome.
-echo After that, run BulkSearch_ê∂ê¨AIàÍäáåüçı.bat.
+echo After that, run BulkSearch bat.
 echo.

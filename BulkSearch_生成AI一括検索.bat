@@ -7,7 +7,7 @@ echo ========================================
 
 cd /d "%~dp0"
 
-:: Node.js のパスを環境変数 PATH に追加（新規インストール直後などの反映対策）
+:: Add Node.js to PATH (in case it was just installed and PATH is not yet updated)
 where node >nul 2>nul
 if %errorlevel% neq 0 (
   if exist "C:\Program Files\nodejs" (
