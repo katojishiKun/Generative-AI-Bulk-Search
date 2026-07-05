@@ -575,9 +575,6 @@ await inputPage.exposeFunction('sendToPerplexity', async (text: string, entryId:
 
   await perplexityPage.bringToFront();
 
-  // 新規チャット画面に遷移（毎回クリーンな状態で送信）
-  await perplexityPage.goto(PERPLEXITY_URL, { waitUntil: 'domcontentloaded' });
-
   try {
     await perplexityPage.waitForSelector(SELECTORS.perplexity.input, { timeout: 15000 });
   } catch {
