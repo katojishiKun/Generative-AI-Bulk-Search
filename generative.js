@@ -67,13 +67,39 @@ btn.addEventListener('click', async () => {
 retryBtn.addEventListener('click', async () => {
   if (!lastQuestion) return;
 
+  // 現在チェックされた送信先を取得
+  const checkedTargets = [
+    ...document.querySelectorAll('.send-panel .destination-group input[type="checkbox"]:checked')
+  ].map(el => el.value);
+
+  if (checkedTargets.length === 0) {
+    statusEl.className = 'error';
+    statusEl.textContent = '再送信先を1つ以上選択してください。';
+    return;
+  }
+
   retryBtn.disabled = true;
   btn.disabled = true;
   statusEl.className = '';
-  statusEl.textContent = '再取得中...';
+  statusEl.textContent = '再送信中... 各AIへ順番に入力しています。';
+
+  // 対象カードの表示状態を「取得中」に戻す
+  const entry = document.querySelector(`.entry[data-entry-id="${lastEntryId}"]`);
+  if (entry) {
+    for (const target of checkedTargets) {
+      const body = entry.querySelector(`.response-card.${target} .response-body`);
+      if (body) {
+        body.className = 'response-body loading';
+        body.textContent = '回答を取得中...';
+      }
+    }
+  }
 
   try {
-    await window.retryGetResponse(lastQuestion, lastCheckedTargets);
+    await window.retryGetResponse(lastQuestion, checkedTargets);
+    statusEl.textContent = '全AIへの再送信完了。回答を待っています。';
+    retryBtn.disabled = false;
+    btn.disabled = false;
   } catch (e) {
     statusEl.className = 'error';
     statusEl.textContent = '再取得エラー: ' + e.message;
