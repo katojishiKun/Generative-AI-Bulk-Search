@@ -2,7 +2,7 @@
  * 各 AI サービスのセレクタ定数
  *
  * AI サービスの UI が変更された際は、このファイルのみを修正すること。
- * @lastChecked 2026-06-26
+ * @lastChecked 2026-07-28
  */
 export const SELECTORS = {
 
@@ -22,12 +22,18 @@ export const SELECTORS = {
   chatgpt: {
     /** テキスト入力欄 */
     input:    '#prompt-textarea',
-    /** 送信ボタン */
+    /** 送信ボタン（テキスト入力後に表示される） */
     sendBtn:  'button[data-testid="send-button"]',
+    /**
+     * 生成中に表示される「停止」ボタン。
+     * このボタンが消えた瞬間が生成完了のタイミング。
+     * （2026-07-28 調査: aria-label="回答を停止", data-testid="stop-button"）
+     */
+    stopBtn:  'button[data-testid="stop-button"]',
     /** AI 回答コンテナ（カウント・取得に使用） */
     response: '[data-message-author-role="assistant"]',
-    /** 回答本文（.markdown / .prose を優先） */
-    content:  '.markdown, .prose',
+    /** 回答本文（.markdown を優先） */
+    content:  '.markdown',
   },
 
   /** Claude (https://claude.ai) */

@@ -169,15 +169,93 @@ async function waitForGeminiResponse(
 }
 
 // ─────────────────────────────────────────────────────────────────
-// ChatGPT 回答待機（安定判定は textContent、返却は innerHTML）
+// ChatGPT 回答待機
+//
+// 【変更履歴】
+// 2026-07-28: ChatGPT が「思考モデル（Thinking）」を導入したことで、
+//   以前の「assistant メッセージの要素数増加 → テキスト安定化」方式が
+//   動作しなくなった。原因は以下の 2 点:
+//
+//   1) 「思考中」ブロックも assistant 要素として出現し、要素数の増加を
+//      早期に検知してしまう。
+//   2) 思考終了後に ChatGPT が DOM を再構築するため、一時的に
+//      textContent が空文字列になり、安定化条件を永遠に満たせなくなる。
+//
+//   新方式: 「生成停止ボタン (data-testid="stop-button") の出現→消滅」
+//   で生成完了を検知する。ボタンが消えた後に最後の assistant 要素の
+//   innerHTML を取得する。
+//   フォールバック: 停止ボタンが期待通り現れない場合に備え、
+//   テキスト安定化方式も引き続き残す。
 // ─────────────────────────────────────────────────────────────────
 async function waitForChatGPTResponse(
   previousCount: number,
   timeoutMs = RESPONSE_TIMEOUT_MS
 ): Promise<string> {
+  const start = Date.now();
+
+  // ── フェーズ 1: 停止ボタンが出現するまで待機 ──────────────────────
+  // 送信後、ChatGPT が生成を開始すると停止ボタン (data-testid="stop-button")
+  // が DOM に追加される。これを生成開始のシグナルとして待機する。
+  // （タイムアウト 15 秒で出現しない場合はフォールバック方式に切り替え）
+  const stopBtnAppearTimeout = 15_000;
+  let stopBtnAppeared = false;
+  while (Date.now() - start < stopBtnAppearTimeout) {
+    const found: boolean = await chatgptPage.evaluate(
+      (sel) => !!document.querySelector(sel),
+      SELECTORS.chatgpt.stopBtn
+    );
+    if (found) {
+      stopBtnAppeared = true;
+      console.log('[ChatGPT] 停止ボタンを検知 → 生成開始。完了を待機します。');
+      break;
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  if (stopBtnAppeared) {
+    // ── フェーズ 2: 停止ボタンが消えるまで待機（＝生成完了）──────────
+    while (Date.now() - start < timeoutMs) {
+      const stillExists: boolean = await chatgptPage.evaluate(
+        (sel) => !!document.querySelector(sel),
+        SELECTORS.chatgpt.stopBtn
+      );
+      if (!stillExists) {
+        console.log('[ChatGPT] 停止ボタン消滅 → 生成完了。回答を取得します。');
+        break;
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error(`ChatGPT の応答がタイムアウトしました（${timeoutMs / 1000}秒）。`);
+    }
+
+    // ── フェーズ 3: 最後の assistant 要素から innerHTML を取得 ───────
+    // 停止ボタン消滅直後は DOM 更新が走ることがあるため 500ms 待つ
+    await new Promise(r => setTimeout(r, 500));
+
+    const html: string = await chatgptPage.evaluate(({ responseSel, contentSel }) => {
+      const responses = document.querySelectorAll(responseSel);
+      if (responses.length === 0) return '';
+      const last = responses[responses.length - 1];
+      // .markdown がある場合はそれを返す（不要なボタン類を除外できる）
+      const content = last.querySelector(contentSel);
+      return (content ?? last).innerHTML ?? '';
+    }, { responseSel: SELECTORS.chatgpt.response, contentSel: SELECTORS.chatgpt.content });
+
+    if (!html) {
+      throw new Error('ChatGPT の回答が空でした。');
+    }
+    return html;
+  }
+
+  // ── フォールバック: 停止ボタンが現れなかった場合 ─────────────────
+  // 旧来の「テキスト安定化」方式で回収を試みる。
+  // （ログインセッション切れ・UIが変わったなどの稀なケースに対応）
+  console.warn('[ChatGPT] 停止ボタンが出現しませんでした。テキスト安定化方式にフォールバックします。');
+
   const pollInterval = 1500;
   const stableThreshold = 3;
-  const start = Date.now();
   let lastText = '';
   let stableCount = 0;
 
@@ -203,14 +281,13 @@ async function waitForChatGPTResponse(
     if (currentText.length > 0 && currentText === lastText) {
       stableCount++;
       if (stableCount >= stableThreshold) {
-        // 安定したら innerHTML を返す（.markdown 要素があればそれを優先）
         const html: string = await chatgptPage.evaluate(({ sel, prev, contentSel }) => {
           const responses = document.querySelectorAll(sel);
           const newResponses = Array.from(responses).slice(prev);
           if (newResponses.length === 0) return '';
           const last = newResponses[newResponses.length - 1];
-          const markdown = last?.querySelector(contentSel);
-          return (markdown ?? last)?.innerHTML ?? '';
+          const content = last?.querySelector(contentSel);
+          return (content ?? last)?.innerHTML ?? '';
         }, { sel: SELECTORS.chatgpt.response, prev: previousCount, contentSel: SELECTORS.chatgpt.content });
         return html;
       }
