@@ -236,8 +236,8 @@ async function waitForChatGPTResponse(
 
     const html: string = await chatgptPage.evaluate(({ responseSel, contentSel }) => {
       const responses = document.querySelectorAll(responseSel);
-      if (responses.length === 0) return '';
       const last = responses[responses.length - 1];
+      if (!last) return '';
       // .markdown がある場合はそれを返す（不要なボタン類を除外できる）
       const content = last.querySelector(contentSel);
       return (content ?? last).innerHTML ?? '';
