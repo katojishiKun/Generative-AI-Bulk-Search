@@ -2,7 +2,7 @@
  * 各 AI サービスのセレクタ定数
  *
  * AI サービスの UI が変更された際は、このファイルのみを修正すること。
- * @lastChecked 2026-07-28
+ * @lastChecked 2026-10-16 (ChatGPT)
  */
 export const SELECTORS = {
 
@@ -21,19 +21,19 @@ export const SELECTORS = {
   /** ChatGPT (https://chatgpt.com) */
   chatgpt: {
     /** テキスト入力欄 */
-    input:    '#prompt-textarea',
+    input:    '#prompt-textarea, #mobile-composer-prompt, textarea[data-mobile-composer-prompt]',
     /** 送信ボタン（テキスト入力後に表示される） */
-    sendBtn:  'button[data-testid="send-button"]',
+    sendBtn:  'button[data-testid="send-button"], button[data-composer-submit]:not(:has([data-composer-stop-icon]:not([hidden])))',
     /**
      * 生成中に表示される「停止」ボタン。
-     * このボタンが消えた瞬間が生成完了のタイミング。
-     * （2026-07-28 調査: aria-label="回答を停止", data-testid="stop-button"）
+     * 新UIでは送信ボタン内の停止アイコンの表示で判定する。
+     * 回答の完了属性と本文の安定も併せて確認する。
      */
-    stopBtn:  'button[data-testid="stop-button"]',
+    stopBtn:  'button[data-testid="stop-button"], button[data-composer-submit]:has([data-composer-stop-icon]:not([hidden]))',
     /** AI 回答コンテナ（カウント・取得に使用） */
-    response: '[data-message-author-role="assistant"]',
-    /** 回答本文（.markdown を優先） */
-    content:  '.markdown',
+    response: '[data-message-author-role="assistant"], [data-message-role="assistant"]',
+    /** 回答本文（新旧UI） */
+    content:  '.markdown, [data-assistant-markdown]',
   },
 
   /** Claude (https://claude.ai) */

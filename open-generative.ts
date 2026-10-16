@@ -3,6 +3,7 @@ import { type Page } from 'playwright';
 import * as path from 'path';
 import * as url from 'url';
 import { SELECTORS } from './selectors.ts';
+import { fillChatGPTPrompt, waitForChatGPTResponse } from './chatgpt.ts';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const PAGE_PATH = `file:///${path.join(__dirname, 'generative.html').replace(/\\/g, '/')}`;
@@ -169,138 +170,6 @@ async function waitForGeminiResponse(
 }
 
 // ─────────────────────────────────────────────────────────────────
-// ChatGPT 回答待機
-//
-// 【変更履歴】
-// 2026-07-28: ChatGPT が「思考モデル（Thinking）」を導入したことで、
-//   以前の「assistant メッセージの要素数増加 → テキスト安定化」方式が
-//   動作しなくなった。原因は以下の 2 点:
-//
-//   1) 「思考中」ブロックも assistant 要素として出現し、要素数の増加を
-//      早期に検知してしまう。
-//   2) 思考終了後に ChatGPT が DOM を再構築するため、一時的に
-//      textContent が空文字列になり、安定化条件を永遠に満たせなくなる。
-//
-//   新方式: 「生成停止ボタン (data-testid="stop-button") の出現→消滅」
-//   で生成完了を検知する。ボタンが消えた後に最後の assistant 要素の
-//   innerHTML を取得する。
-//   フォールバック: 停止ボタンが期待通り現れない場合に備え、
-//   テキスト安定化方式も引き続き残す。
-// ─────────────────────────────────────────────────────────────────
-async function waitForChatGPTResponse(
-  previousCount: number,
-  timeoutMs = RESPONSE_TIMEOUT_MS
-): Promise<string> {
-  const start = Date.now();
-
-  // ── フェーズ 1: 停止ボタンが出現するまで待機 ──────────────────────
-  // 送信後、ChatGPT が生成を開始すると停止ボタン (data-testid="stop-button")
-  // が DOM に追加される。これを生成開始のシグナルとして待機する。
-  // （タイムアウト 15 秒で出現しない場合はフォールバック方式に切り替え）
-  const stopBtnAppearTimeout = 15_000;
-  let stopBtnAppeared = false;
-  while (Date.now() - start < stopBtnAppearTimeout) {
-    const found: boolean = await chatgptPage.evaluate(
-      (sel) => !!document.querySelector(sel),
-      SELECTORS.chatgpt.stopBtn
-    );
-    if (found) {
-      stopBtnAppeared = true;
-      console.log('[ChatGPT] 停止ボタンを検知 → 生成開始。完了を待機します。');
-      break;
-    }
-    await new Promise(r => setTimeout(r, 300));
-  }
-
-  if (stopBtnAppeared) {
-    // ── フェーズ 2: 停止ボタンが消えるまで待機（＝生成完了）──────────
-    while (Date.now() - start < timeoutMs) {
-      const stillExists: boolean = await chatgptPage.evaluate(
-        (sel) => !!document.querySelector(sel),
-        SELECTORS.chatgpt.stopBtn
-      );
-      if (!stillExists) {
-        console.log('[ChatGPT] 停止ボタン消滅 → 生成完了。回答を取得します。');
-        break;
-      }
-      await new Promise(r => setTimeout(r, 500));
-    }
-
-    if (Date.now() - start >= timeoutMs) {
-      throw new Error(`ChatGPT の応答がタイムアウトしました（${timeoutMs / 1000}秒）。`);
-    }
-
-    // ── フェーズ 3: 最後の assistant 要素から innerHTML を取得 ───────
-    // 停止ボタン消滅直後は DOM 更新が走ることがあるため 500ms 待つ
-    await new Promise(r => setTimeout(r, 500));
-
-    const html: string = await chatgptPage.evaluate(({ responseSel, contentSel }) => {
-      const responses = document.querySelectorAll(responseSel);
-      const last = responses[responses.length - 1];
-      if (!last) return '';
-      // .markdown がある場合はそれを返す（不要なボタン類を除外できる）
-      const content = last.querySelector(contentSel);
-      return (content ?? last).innerHTML ?? '';
-    }, { responseSel: SELECTORS.chatgpt.response, contentSel: SELECTORS.chatgpt.content });
-
-    if (!html) {
-      throw new Error('ChatGPT の回答が空でした。');
-    }
-    return html;
-  }
-
-  // ── フォールバック: 停止ボタンが現れなかった場合 ─────────────────
-  // 旧来の「テキスト安定化」方式で回収を試みる。
-  // （ログインセッション切れ・UIが変わったなどの稀なケースに対応）
-  console.warn('[ChatGPT] 停止ボタンが出現しませんでした。テキスト安定化方式にフォールバックします。');
-
-  const pollInterval = 1500;
-  const stableThreshold = 3;
-  let lastText = '';
-  let stableCount = 0;
-
-  // 新しい assistant メッセージが追加されるまで待機
-  while (Date.now() - start < timeoutMs) {
-    const count: number = await chatgptPage.evaluate(
-      (sel) => document.querySelectorAll(sel).length,
-      SELECTORS.chatgpt.response
-    );
-    if (count > previousCount) break;
-    await new Promise(r => setTimeout(r, 500));
-  }
-
-  while (Date.now() - start < timeoutMs) {
-    const currentText: string = await chatgptPage.evaluate(({ sel, prev }) => {
-      const responses = document.querySelectorAll(sel);
-      const newResponses = Array.from(responses).slice(prev);
-      if (newResponses.length === 0) return '';
-      const last = newResponses[newResponses.length - 1];
-      return last?.textContent?.trim() ?? '';
-    }, { sel: SELECTORS.chatgpt.response, prev: previousCount });
-
-    if (currentText.length > 0 && currentText === lastText) {
-      stableCount++;
-      if (stableCount >= stableThreshold) {
-        const html: string = await chatgptPage.evaluate(({ sel, prev, contentSel }) => {
-          const responses = document.querySelectorAll(sel);
-          const newResponses = Array.from(responses).slice(prev);
-          if (newResponses.length === 0) return '';
-          const last = newResponses[newResponses.length - 1];
-          const content = last?.querySelector(contentSel);
-          return (content ?? last)?.innerHTML ?? '';
-        }, { sel: SELECTORS.chatgpt.response, prev: previousCount, contentSel: SELECTORS.chatgpt.content });
-        return html;
-      }
-    } else {
-      stableCount = 0;
-      lastText = currentText;
-    }
-    await new Promise(r => setTimeout(r, pollInterval));
-  }
-  throw new Error(`ChatGPT の応答がタイムアウトしました（${timeoutMs / 1000}秒）。`);
-}
-
-// ─────────────────────────────────────────────────────────────────
 // 送信 → Gemini
 // ─────────────────────────────────────────────────────────────────
 await inputPage.exposeFunction('sendToGemini', async (text: string, entryId: string) => {
@@ -385,61 +254,30 @@ await inputPage.exposeFunction('sendToChatGPT', async (text: string, entryId: st
 
   await chatgptPage.bringToFront();
 
-  const inputSelector = SELECTORS.chatgpt.input;
+  let previousCount: number;
   try {
-    await chatgptPage.waitForSelector(inputSelector, { timeout: 15000 });
-  } catch {
-    await inputPage.evaluate(
-      ({ id, msg }) => { (window as any).updateChatGPTResponseError(id, msg); },
-      { id: entryId, msg: 'ChatGPT の入力欄が見つかりません。ログインしているか確認してください。' }
-    );
-    return;
-  }
-
-  // 送信前の assistant メッセージ数を記録
-  const previousCount: number = await chatgptPage.evaluate(
-    (sel) => document.querySelectorAll(sel).length,
-    SELECTORS.chatgpt.response
-  );
-  lastPreviousChatGPTCount = previousCount;
-
-  // ① 入力チェック＆リトライ付きタイピング
-  try {
-    await typeWithRetry(
-      chatgptPage,
-      inputSelector,
-      text,
-      async () => await chatgptPage.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return '';
-        // textarea は .value、contenteditable div は .innerText で取得
-        return ((el as HTMLTextAreaElement).value ?? (el as HTMLElement).innerText ?? '').trim();
-      }, SELECTORS.chatgpt.input)
-    );
+    await fillChatGPTPrompt(chatgptPage, text);
+    previousCount = await chatgptPage.locator(SELECTORS.chatgpt.response).count();
+    lastPreviousChatGPTCount = previousCount;
+    lastEntryId = entryId;
+    await chatgptPage.locator(SELECTORS.chatgpt.sendBtn).filter({ visible: true }).first().click({ timeout: 15_000 });
+    console.log(`ChatGPT 送信完了 (送信前応答数: ${previousCount})`);
   } catch (err: any) {
-    console.error(`ChatGPT 入力失敗: ${err.message}`);
-    await inputPage.bringToFront();
+    console.error(`ChatGPT 送信失敗: ${err.message}`);
     await inputPage.evaluate(
       ({ id, msg }) => { (window as any).updateChatGPTResponseError(id, msg); },
       { id: entryId, msg: err.message }
     );
     return;
+  } finally {
+    await inputPage.bringToFront();
   }
-
-  // ② 送信ボタンをクリック
-  const sendBtn = chatgptPage.locator(SELECTORS.chatgpt.sendBtn).first();
-  await sendBtn.click();
-  // 次の画面（一括調べもの画面）に切り替わる前に0.5秒待機する
-  await new Promise(r => setTimeout(r, 500));
-  console.log(`ChatGPT 送信完了 (送信前応答数: ${previousCount})`);
-
-  await inputPage.bringToFront();
 
   // ③ 回答待ちをバックグラウンドで実行（fire-and-forget）
   const capturedChatGPTCount = previousCount;
   void (async () => {
     try {
-      const answer = await waitForChatGPTResponse(capturedChatGPTCount);
+      const answer = await waitForChatGPTResponse(chatgptPage, capturedChatGPTCount);
       console.log(`ChatGPT 回答取得完了 (${answer.length} 文字)`);
       await inputPage.evaluate(
         ({ id, a }) => { (window as any).updateChatGPTResponse(id, a); },
@@ -749,7 +587,7 @@ await inputPage.exposeFunction('retryGetResponse', async (_question: string, tar
   if (targets.includes('chatgpt')) {
     retries.push((async () => {
       try {
-        const html = await waitForChatGPTResponse(lastPreviousChatGPTCount, 30_000);
+        const html = await waitForChatGPTResponse(chatgptPage, lastPreviousChatGPTCount, 30_000);
         console.log(`ChatGPT 再取得成功 (${html.length} 文字)`);
         await inputPage.evaluate(
           ({ id, a }) => { (window as any).updateChatGPTResponse(id, a); },
@@ -881,7 +719,9 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
     // ─── ② 新規チャット URL へ遷移 ─────────────────────────────
     await summaryPage.bringToFront();
     await summaryPage.goto(tcfg.newUrl, { waitUntil: 'domcontentloaded' });
-    await summaryPage.waitForSelector(tcfg.inputSelector, { timeout: 15000 });
+    if (target !== 'chatgpt') {
+      await summaryPage.waitForSelector(tcfg.inputSelector, { timeout: 15000 });
+    }
 
     // ─── ③ 遷移直後の応答数を記録（新規タブなので 0 になるはず） ──
     const previousCount: number = await summaryPage.evaluate(
@@ -889,20 +729,24 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
     );
 
     // ─── ④ 合成プロンプトを入力（リトライ付き）─────────────────────
-    await typeWithRetry(
-      summaryPage,
-      tcfg.inputSelector,
-      prompt,
-      async () => await summaryPage.evaluate((sel) => {
-        const el = document.querySelector(sel) as HTMLElement | HTMLInputElement | HTMLTextAreaElement | null;
-        if (!el) return '';
-        return (('value' in el ? el.value : null) ?? el.innerText ?? el.textContent ?? '').trim();
-      }, tcfg.inputSelector)
-    );
+    if (target === 'chatgpt') {
+      await fillChatGPTPrompt(summaryPage, prompt);
+    } else {
+      await typeWithRetry(
+        summaryPage,
+        tcfg.inputSelector,
+        prompt,
+        async () => await summaryPage.evaluate((sel) => {
+          const el = document.querySelector(sel) as HTMLElement | HTMLInputElement | HTMLTextAreaElement | null;
+          if (!el) return '';
+          return (('value' in el ? el.value : null) ?? el.innerText ?? el.textContent ?? '').trim();
+        }, tcfg.inputSelector)
+      );
+    }
 
     // ─── ⑤ 送信 ────────────────────────────────────────────────
     if (tcfg.sendMethod === 'button' && tcfg.sendBtnSelector) {
-      const sendBtn = summaryPage.locator(tcfg.sendBtnSelector).first();
+      const sendBtn = summaryPage.locator(tcfg.sendBtnSelector).filter({ visible: true }).first();
       await sendBtn.click();
     } else {
       await summaryPage.keyboard.press('Enter');
@@ -914,8 +758,7 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
     await inputPage.bringToFront();
 
     // ─── ⑥ 回答待機・取得（fire-and-forget） ─────────────────────
-    // 既存の waitFor〜 関数はメインページ変数を参照しているため流用せず、
-    // summaryPage に対してインラインで同等の待機ロジックを実装する。
+    // ChatGPT は通常検索と共通の待機処理を使い、他サービスはこのタブで待機する。
     const capturedCount = previousCount;
     void (async () => {
       const RESPONSE_TIMEOUT_MS_SUMMARY = 90_000;
@@ -926,7 +769,9 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
       try {
         let answer = '';
 
-        if (target === 'claude') {
+        if (target === 'chatgpt') {
+          answer = await waitForChatGPTResponse(summaryPage, capturedCount, RESPONSE_TIMEOUT_MS_SUMMARY);
+        } else if (target === 'claude') {
           // Claude: data-is-streaming が消えたら完了
           while (Date.now() - start < RESPONSE_TIMEOUT_MS_SUMMARY) {
             const count: number = await summaryPage.evaluate(
@@ -958,7 +803,7 @@ await inputPage.exposeFunction('sendSummary', async (prompt: string, target: str
           }, { prev: capturedCount, responseSel: tcfg.responseSelector, contentSel: tcfg.contentSelector ?? '' });
 
         } else {
-          // Gemini / ChatGPT / Perplexity: テキストが安定するまでポーリング
+          // Gemini / Perplexity: テキストが安定するまでポーリング
           while (Date.now() - start < RESPONSE_TIMEOUT_MS_SUMMARY) {
             const count: number = await summaryPage.evaluate(
               (sel) => document.querySelectorAll(sel).length, tcfg.responseSelector
