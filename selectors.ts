@@ -20,20 +20,23 @@ export const SELECTORS = {
 
   /** ChatGPT (https://chatgpt.com) */
   chatgpt: {
-    /** テキスト入力欄 */
-    input:    '#prompt-textarea, #mobile-composer-prompt, textarea[data-mobile-composer-prompt]',
+    /**
+     * テキスト入力欄。
+     * 現在の ChatGPT は Lexical エディタ (data-lexical-editor="true") を使用しており、
+     * #prompt-textarea は存在しない。
+     */
+    input:    '[data-lexical-editor="true"], div[contenteditable="true"][role="textbox"], .ProseMirror[contenteditable="true"]',
     /** 送信ボタン（テキスト入力後に表示される） */
-    sendBtn:  'button[data-testid="send-button"], button[data-composer-submit]:not(:has([data-composer-stop-icon]:not([hidden])))',
+    sendBtn:  'button[data-testid="send-button"], [data-testid="composer-submit-button"], button[aria-label*="送信"], button[aria-label*="Send message"]',
     /**
      * 生成中に表示される「停止」ボタン。
-     * 新UIでは送信ボタン内の停止アイコンの表示で判定する。
-     * 回答の完了属性と本文の安定も併せて確認する。
+     * 新UIでは data-testid="stop-button" または aria-label で判定する。
      */
-    stopBtn:  'button[data-testid="stop-button"], button[data-composer-submit]:has([data-composer-stop-icon]:not([hidden]))',
+    stopBtn:  'button[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="停止"]',
     /** AI 回答コンテナ（カウント・取得に使用） */
     response: '[data-message-author-role="assistant"], [data-message-role="assistant"]',
     /** 回答本文（新旧UI） */
-    content:  '.markdown, [data-assistant-markdown]',
+    content:  '.markdown, [data-assistant-markdown], .prose, [class*="markdown"]',
   },
 
   /** Claude (https://claude.ai) */
